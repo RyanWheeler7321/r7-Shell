@@ -1,0 +1,7 @@
+{
+  "title": "Example app",
+  "command": "node \"$R7SHELL_ROOT/apps/example.js\"",
+  "theme": "night",
+  "fixedTitle": true,
+  "keepShell": false
+}

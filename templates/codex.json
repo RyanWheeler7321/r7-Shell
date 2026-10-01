@@ -1,0 +1,7 @@
+{
+  "title": "Codex",
+  "command": "codex",
+  "launch": { "ready": "^\\s*[›▌] |for shortcuts|context left" },
+  "theme": "night",
+  "fixedTitle": true
+}

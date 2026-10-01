@@ -1,0 +1,44 @@
+/* Pinned media: thumbnails at the top right, drawn inside the page.
+   Only the strip takes pointer events; the root and the preview never do. */
+#r7-pins { position: absolute; inset: 0; pointer-events: none; z-index: 20; }
+
+.r7-pins-strip { position: absolute; top: 32px; right: 8px; z-index: 0; pointer-events: auto; background: transparent; }
+.r7-pins-strip[hidden] { display: none; }
+.r7-pins-strip * { pointer-events: none; }
+
+.r7-pins-tile {
+  position: absolute; top: 0; border-radius: 14px; overflow: hidden; background: #151218;
+}
+.r7-pins-tile > img, .r7-pins-tile > video {
+  display: block; width: 100%; height: 100%; object-fit: scale-down;
+}
+/* Capsule edge above the media: strip border at rest, accent while hovered. */
+.r7-pins-tile::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(87, 20, 53, .96);
+}
+.r7-pins-tile.hovered::before { box-shadow: inset 0 0 0 2px var(--r7-accent, #ff4fb8); }
+.r7-pins-tile.video::after {
+  content: ''; position: absolute; z-index: 2;
+  width: calc(var(--side) * 5 / 6); height: var(--side);
+  left: calc(50% - var(--side) / 3); top: calc(50% - var(--side) / 2);
+  background: rgba(255, 255, 255, .86); clip-path: polygon(0 0, 0 100%, 100% 50%);
+}
+/* The growing preview stands in for the tile it came from. */
+.r7-pins-tile.covered { visibility: hidden; }
+
+.r7-pins-rail {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 20px; opacity: 0;
+  transition: opacity 140ms cubic-bezier(.33, 1, .68, 1);
+}
+.r7-pins-strip.hovering .r7-pins-rail { opacity: 1; }
+.r7-pins-dot { position: absolute; border-radius: 50%; background: var(--r7-accent, #ff4fb8); }
+
+.r7-pins-preview { position: absolute; inset: 0; z-index: 1; clip-path: inset(8px); pointer-events: none; }
+.r7-pins-layer {
+  position: absolute; border-radius: 14px; overflow: hidden; background: rgb(7, 7, 8);
+  opacity: 1; transition: opacity 120ms cubic-bezier(.33, 1, .68, 1);
+}
+.r7-pins-layer.pending, .r7-pins-layer.fading { opacity: 0; }
+.r7-pins-layer.unsized { visibility: hidden; }
+.r7-pins-layer > img, .r7-pins-layer > video { display: block; width: 100%; height: 100%; object-fit: fill; }

@@ -1,0 +1,10 @@
+{
+  "title": "r7Harness",
+  "command": "r7harness launch",
+  "startsSlow": true,
+  "r7harness": true,
+  "launch": { "ready": "^╭.*\\n(?:│.*\\n)*╰─.*─╯$" },
+  "theme": "night",
+  "fixedTitle": true,
+  "messageStart": "^▏"
+}

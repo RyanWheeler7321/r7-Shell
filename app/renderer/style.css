@@ -1,0 +1,86 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg, #000); }
+#term { position: absolute; inset: var(--pad, 18px); overflow: hidden; }
+/* No title bar, like the Windows Terminal windows: the top padding moves the window. */
+#drag { position: absolute; left: 0; right: 0; top: 0; height: var(--pad, 18px); -webkit-app-region: drag; }
+/* Scrolling is drawn by renderer.js; xterm's scrollbar and edge shadow stay hidden. */
+.xterm .xterm-scrollable-element > .scrollbar,
+.xterm .xterm-scrollable-element > .shadow { display: none !important; }
+#extra-row { position: absolute; left: 0; overflow: hidden; white-space: pre; pointer-events: none; }
+#extra-row span { display: inline-block; overflow: hidden; }
+#find { z-index: 25;
+  position: absolute; top: 8px; right: 14px; display: flex; gap: 8px; align-items: center; padding: 5px 8px;
+  border-radius: 6px; background: rgba(20, 8, 30, .92); box-shadow: 0 0 0 1px rgba(240, 220, 255, .18);
+}
+#find input { width: 220px; border: 0; outline: 0; background: transparent; color: #fff; font: 13px var(--font, monospace); }
+#find-count { color: rgba(240, 220, 255, .6); font: 12px var(--font, monospace); min-width: 40px; text-align: right; }
+#find[hidden] { display: none; }
+#status {
+  position: absolute; right: 14px; bottom: 10px; padding: 5px 10px; border-radius: 6px;
+  font: 12px system-ui, sans-serif; color: #fff; background: rgba(0, 0, 0, .75); pointer-events: none;
+}
+/* Attention glow (glow.js): soft light fading in from the edges, in the theme accent. */
+#glow { position: fixed; inset: 0; pointer-events: none; z-index: 30; --c: var(--r7-accent, #ff4fb8); }
+#glow .top {
+  position: absolute; left: 0; right: 0; top: 0; height: 3px; opacity: .3; --gc: #fff;
+  background: linear-gradient(to bottom, var(--gc) 0, var(--gc) 2px, color-mix(in srgb, var(--gc) 40%, transparent) 30%, transparent);
+  transition: height 180ms ease, opacity 180ms ease;
+}
+#glow .edge { position: absolute; inset: 0; opacity: 0; box-shadow: inset 0 0 0 2px var(--c), inset 0 0 28px 8px var(--c), inset 0 0 100px 18px var(--c); }
+/* Focused bar: full strength with a solid core, so the selected window reads at a glance. */
+#glow.focused .top, #glow.seen .top { height: 14px; opacity: 1; --gc: var(--c); background: linear-gradient(to bottom, var(--gc) 0, var(--gc) 2px, color-mix(in srgb, var(--gc) 60%, transparent) 35%, transparent); }
+/* Focused bottom line: a bit thinner than the top bar, strongest at the sides and fading out toward the middle. */
+#glow .bottom {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 12px; opacity: 0; --gc: var(--c);
+  background: linear-gradient(to top, var(--gc) 0, var(--gc) 2px, color-mix(in srgb, var(--gc) 65%, transparent) 40%, transparent);
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 8%, transparent 42%, transparent 58%, #000 92%, #000 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 8%, transparent 42%, transparent 58%, #000 92%, #000 100%);
+  transition: opacity 180ms ease;
+}
+#glow.focused .bottom, #glow.seen .bottom { opacity: 1; }
+/* Divider: a faint glow down the left side, so windows tiled edge to edge stay apart. */
+#glow .left { position: absolute; top: 0; bottom: 0; left: 0; width: 4px; opacity: .35; background: linear-gradient(to right, var(--c) 0, var(--c) 1px, transparent); }
+#glow.held .top { height: 8px; opacity: .75; }
+#glow.waiting .top { height: 100px; opacity: .9; --gc: var(--c); }
+/* The flash snaps fully on and off, like the Windows Terminal bars, never a soft pulse. */
+#glow.pulse .top { height: 100px; --gc: var(--c); transition: none; animation: glow-flash 500ms linear var(--flash-delay, 0ms) infinite; }
+#glow.pulse .edge { animation: glow-flash 500ms linear var(--flash-delay, 0ms) infinite; }
+@keyframes glow-flash { 0%, 29.9% { opacity: 1; } 30%, 100% { opacity: 0; } }
+/* Gliding cursor (renderer.js): inverts what's under it, outline when unfocused. */
+#glide-cursor { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 5; background: var(--cursor); mix-blend-mode: difference; will-change: transform; }
+#glide-cursor.outline, #glide-cursor.blurred { background: transparent; mix-blend-mode: normal; box-shadow: inset 0 0 0 1px var(--cursor); }
+#glide-cursor.bar { background: transparent; mix-blend-mode: normal; box-shadow: inset var(--cursor-width, 2px) 0 0 var(--cursor); }
+#glide-cursor.underline { background: transparent; mix-blend-mode: normal; box-shadow: inset 0 calc(-1 * var(--cursor-width, 2px)) 0 var(--cursor); }
+/* Hard on and off like Windows Terminal's caret, only while focused and still (renderer.js). */
+#glide-cursor.blink { animation: cursor-blink var(--blink-period, 662ms) linear infinite; }
+@keyframes cursor-blink { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
+/* Fading text (fade.js) sits over the grid, under the cursor and titles. */
+#fade-mask { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 3; }
+/* Input box selection (input.js): along the text, under the cursor. */
+#box-selection { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; }
+#box-selection div { position: absolute; }
+/* Type-ahead box (input.js): stands in for the program's input until it's ready. */
+/* Launch screen (launch.js) and the type-ahead box over it (input.js). */
+#launch { position: absolute; left: 0; top: 0; z-index: 6; pointer-events: none; }
+#type-ahead { position: absolute; z-index: 7; pointer-events: none; white-space: pre; }
+#type-ahead .line { position: absolute; left: 0; }
+#type-ahead .caret { display: inline-block; height: 1em; vertical-align: -0.12em; background: var(--edge); }
+
+/* Reply titles (1.3x) and pictures from marks.js. */
+.r7-title, .r7-image { pointer-events: none; overflow: visible !important; }
+.r7-title-text {
+  position: absolute; left: 0; top: -15%; height: 130%; padding-right: .4em;
+  white-space: pre; background: var(--bg);
+}
+.r7-title-text.wrap { height: auto; white-space: normal; overflow-wrap: anywhere; }
+.r7-title-sel { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+.r7-title-text > span { position: relative; }
+.r7-image img {
+  display: block; width: 0; height: 0; margin-top: 3px; border-radius: 10px;
+}
+/* Task title above the input box (marks.js): 1.3x, looping when it doesn't fit. */
+#r7-task-title { position: absolute; z-index: 4; overflow: hidden; pointer-events: none; background: var(--bg); white-space: pre; }
+.r7-task-track { display: inline-flex; }
+.r7-task-line { padding-right: 3em; }
+.r7-task-track:not(.loop) .r7-task-line { padding-right: 0; }
+.r7-task-track.loop { animation: r7-task-loop linear infinite; }
+@keyframes r7-task-loop { from { transform: translateX(0); } to { transform: translateX(var(--shift)); } }

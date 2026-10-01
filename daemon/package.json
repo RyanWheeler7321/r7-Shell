@@ -1,0 +1,11 @@
+{
+  "name": "r7-shell-daemon",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.22.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Claude Code",
+  "command": "claude",
+  "launch": { "ready": "^\\s*(?:│\\s*)?[>❯] |for shortcuts" },
+  "theme": "night",
+  "fixedTitle": true
+}
