@@ -1,5 +1,5 @@
 {
-  "title": "r7Harness",
+  "title": "r7-Harness",
   "command": "r7harness launch",
   "startsSlow": true,
   "r7harness": true,

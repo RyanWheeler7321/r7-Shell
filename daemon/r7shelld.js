@@ -1,5 +1,5 @@
 'use strict';
-// r7Shell session daemon. Runs in WSL, owns every terminal session, and keeps a
+// r7-Shell session daemon. Runs in WSL, owns every terminal session, and keeps a
 // headless copy of each screen so windows can close, reload or crash and reattach
 // to the exact same state. The app and the CLI are both just clients of this.
 
@@ -95,7 +95,7 @@ function startPty(s) {
 // Colors a program sets (OSC 4/10/11/12/17) aren't part of the serialized screen,
 // so they are kept here and replayed ahead of every snapshot. Otherwise a reopened
 // window shows the wrong look. The same goes for a program's OSC 7321 `hello`,
-// which turns on r7Harness features in the window.
+// which turns on r7-Harness features in the window.
 function trackColors(s) {
   s.colors = new Map();
   s.hello = null;
@@ -296,7 +296,7 @@ function waitFor(s, q, res) {
 
 function askApp(cmd, argsObj, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
-    if (!appClient) return reject(new Error('r7Shell app is not running'));
+    if (!appClient) return reject(new Error('r7-Shell app is not running'));
     const id = crypto.randomBytes(6).toString('hex');
     const timer = setTimeout(() => { appWaiters.delete(id); reject(new Error(`app did not answer "${cmd}"`)); }, timeoutMs);
     appWaiters.set(id, { resolve, reject, timer });
@@ -409,7 +409,7 @@ function attachApp(ws) {
   ws.on('close', () => {
     if (appClient !== ws) return;
     appClient = null;
-    for (const [id, w] of appWaiters) { clearTimeout(w.timer); w.reject(new Error('r7Shell app disconnected')); appWaiters.delete(id); }
+    for (const [id, w] of appWaiters) { clearTimeout(w.timer); w.reject(new Error('r7-Shell app disconnected')); appWaiters.delete(id); }
     log('info', 'app.disconnect', {});
   });
 }

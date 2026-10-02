@@ -1,5 +1,5 @@
 'use strict';
-// r7shell: command line for the r7Shell daemon and app. Runs in WSL.
+// r7shell: command line for the r7-Shell daemon and app. Runs in WSL.
 
 const fs = require('fs');
 const path = require('path');

@@ -1,5 +1,5 @@
 'use strict';
-// r7Shell app: thin window host. Sessions live in the WSL daemon, so this
+// r7-Shell app: thin window host. Sessions live in the WSL daemon, so this
 // process can quit, crash or update without losing a single terminal.
 
 const { app, BrowserWindow, ipcMain, clipboard, shell, screen, nativeTheme } = require('electron');
@@ -484,7 +484,7 @@ async function handleArgs(args) {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  // Launching r7Shell again opens another window with the default template.
+  // Launching r7-Shell again opens another window with the default template.
   app.on('second-instance', (_e, args) => {
     const rest = args.slice(1);
     if (rest.includes('--reopen')) return reopenClosed().catch((e) => log('error', 'reopen.error', { error: e.message }));
@@ -502,7 +502,7 @@ if (!app.requestSingleInstanceLock()) {
     } catch (e) {
       log('error', 'daemon.unavailable', { error: e.message });
       const { dialog } = require('electron');
-      dialog.showErrorBox('r7Shell', `The session daemon didn't start.\n${e.message}\nLog: ${STATE}\\logs`);
+      dialog.showErrorBox('r7-Shell', `The session daemon didn't start.\n${e.message}\nLog: ${STATE}\\logs`);
       app.quit();
       return;
     }

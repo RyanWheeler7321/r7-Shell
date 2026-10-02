@@ -1,5 +1,5 @@
 'use strict';
-// Settings, the daemon, window config, paths and logs for the r7Shell app.
+// Settings, the daemon, window config, paths and logs for the r7-Shell app.
 
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');

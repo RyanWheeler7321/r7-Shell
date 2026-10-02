@@ -1,10 +1,10 @@
-![r7Harness running in r7Shell](assets/r7shell-main.png)
+![r7-Harness running in r7-Shell](assets/r7shell-main.png)
 
-<img src="assets/icon.svg" alt="r7Shell icon" width="96">
+<img src="assets/icon.svg" alt="r7-Shell icon" width="96">
 
-# r7Shell
+# r7-Shell
 
-r7Shell is a lean custom terminal for Windows, made for running agents like Claude Code, Codex and my own r7Harness in WSL, as well as anything else you'd run in a terminal.
+r7-Shell is a lean custom terminal for Windows, made for running agents like Claude Code, Codex and my own r7-Harness in WSL, as well as anything else you'd run in a terminal.
 
 Sessions run in the background in WSL, so they survive the app restarting or crashing, and the windows come back where they were. Closing a window ends its session, but `r7shell reopen` brings it back within 10 seconds. The `r7shell` command can start sessions, type into them, wait for output and take screenshots of a window, so an agent can run other terminals without touching your mouse or keyboard.
 
@@ -16,19 +16,19 @@ Sessions run in the background in WSL, so they survive the app restarting or cra
 - Links and file paths open on a plain click, and images in the output open full size
 - Templates (command, folder, theme, font) and themes as small JSON files
 
-## With r7Harness
+## With r7-Harness
 
-r7Harness and r7Shell send each other a few extra things, so running r7Harness in r7Shell gives you bigger reply titles, pictures right inside replies, numbered questions you can click to start your answer, a bigger task title above the input box that scrolls when it's long, and mouse editing in the input box (drag to select, `Ctrl+click` to move the cursor).
+r7-Harness and r7-Shell send each other a few extra things, so running r7-Harness in r7-Shell gives you bigger reply titles, pictures right inside replies, numbered questions you can click to start your answer, a bigger task title above the input box that scrolls when it's long, and mouse editing in the input box (drag to select, `Ctrl+click` to move the cursor).
 
-The r7harness template runs `r7harness launch`, so put it on your PATH first: `ln -s ~/r7Harness/bin/r7harness ~/.local/bin/r7harness`.
+The r7harness template runs `r7harness launch`, so put it on your PATH first: `ln -s ~/r7-Harness/bin/r7harness ~/.local/bin/r7harness`.
 
 ## Setup
 
 It runs on Windows 11 with WSL. You need Node 22.12 or newer inside WSL.
 
 ```bash
-git clone https://github.com/RyanWheeler7321/r7Shell.git
-cd r7Shell
+git clone https://github.com/RyanWheeler7321/r7-Shell.git
+cd r7-Shell
 bash install.sh
 r7shell new bash --activate
 ```

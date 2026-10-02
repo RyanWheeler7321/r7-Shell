@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs r7Shell. Run it in WSL from anywhere: bash install.sh
+# Installs r7-Shell. Run it in WSL from anywhere: bash install.sh
 set -e
 repo=$(cd "$(dirname "$0")" && pwd)
 
@@ -41,7 +41,7 @@ fs.writeFileSync(file, JSON.stringify(s, null, 2));
 
 cat <<EOF
 
-r7Shell is installed. Settings: $state/settings.json
+r7-Shell is installed. Settings: $state/settings.json
 EOF
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "Add ~/.local/bin to your PATH first (e.g. in ~/.bashrc)."; esac
 cat <<'EOF'

@@ -1,5 +1,5 @@
 'use strict';
-// Starter for a full-screen r7Shell app: alternate screen, resize, keys, mouse.
+// Starter for a full-screen r7-Shell app: alternate screen, resize, keys, mouse.
 // Arrow keys or WASD move the @, clicking puts it there, q quits.
 // Copy this file, add a template pointing at it, and build from here.
 
@@ -14,7 +14,7 @@ function draw() {
   x = Math.max(1, Math.min(w - 2, x));
   y = Math.max(2, Math.min(h - 3, y));
   let frame = '\x1b[H\x1b[2J';
-  frame += `\x1b[1;1H\x1b[38;2;240;220;255mr7Shell example · ${w}x${h} · last input: ${last}\x1b[0m`;
+  frame += `\x1b[1;1H\x1b[38;2;240;220;255mr7-Shell example · ${w}x${h} · last input: ${last}\x1b[0m`;
   frame += `\x1b[${h};1H\x1b[2marrows/WASD move · click to place · q quits\x1b[0m`;
   frame += `\x1b[${y + 1};${x + 1}H\x1b[38;2;255;61;154m@\x1b[0m`;
   out.write(frame);

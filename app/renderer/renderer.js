@@ -124,7 +124,7 @@ function applySnapshot(msg, data) {
   setTitle(msg.title);
   exited = !msg.alive && msg.exitCode != null;
   if (exited) showExit(msg.exitCode);
-  // A snapshot keeps text and colors but not r7Harness's title marks or pictures. It
+  // A snapshot keeps text and colors but not r7-Harness's title marks or pictures. It
   // reprints its whole transcript on a width change, so one narrow-and-back brings them back.
   term.write('', () => {
     if (exited || !harness.on) return;
@@ -609,7 +609,7 @@ function scrollTo(px) {
 }
 
 // ---- jump between messages (Alt+Up / Alt+Down) -----------------------------------
-// A template's `messageStart` regex marks the first row of each message (r7Harness's
+// A template's `messageStart` regex marks the first row of each message (r7-Harness's
 // user message box starts with ▏). Without one, shell prompt marks (OSC 133;A)
 // are used. A jump puts the message one row below the top.
 

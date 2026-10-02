@@ -1,11 +1,11 @@
 'use strict';
 // Typing before a program is ready (templates with `launch.ready`), and mouse editing in
-// r7Harness's input box.
+// r7-Harness's input box.
 
 (() => {
   const launchReady = cfg.launch?.ready ? new RegExp(cfg.launch.ready, 'm') : null;
 
-  // r7Harness's box is `╭──…╮`, then `│  text  │` rows, then `╰─ text ─╯`; text starts at column 3.
+  // r7-Harness's box is `╭──…╮`, then `│  text  │` rows, then `╰─ text ─╯`; text starts at column 3.
   const TEXT_COL = 3;
   const rowText = (y) => term.buffer.active.getLine(y)?.translateToString(true) ?? '';
 
@@ -190,7 +190,7 @@
   // Dragging over the box's text selects it the way a text field does: along the text,
   // never the border or padding. Typing or pasting replaces the selection, Backspace or
   // Delete removes it, Ctrl+C copies it, and the cursor shows as a line meanwhile.
-  // Ctrl+click moves the cursor. r7Harness takes both as `CSI 7321 ; row ; col [; row ; col] ~`
+  // Ctrl+click moves the cursor. r7-Harness takes both as `CSI 7321 ; row ; col [; row ; col] ~`
   // (visible text row and column); older sessions get Ctrl+click as arrow keys and
   // keep the terminal's plain selection.
 

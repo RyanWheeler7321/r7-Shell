@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="r7Shell icon">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="r7-Shell icon">
 <defs>
   <linearGradient id="bg" x1="16" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#1C1224"/><stop offset="1" stop-color="#140E1B"/></linearGradient>
   <linearGradient id="rim" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#D45CFF" stop-opacity="0.42"/><stop offset="0.45" stop-color="#D45CFF" stop-opacity="0.2"/><stop offset="1" stop-color="#D45CFF" stop-opacity="0.3"/></linearGradient>

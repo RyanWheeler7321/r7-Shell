@@ -1,5 +1,5 @@
 'use strict';
-// Reply titles, pictures and questions. r7Harness starts a row with a private
+// Reply titles, pictures and questions. r7-Harness starts a row with a private
 // OSC 7321 when it runs here: `title` redraws that row's text 1.3x, and
 // `image;<rows>;<cols>;<path>` draws the picture over the blank rows above its
 // caption. Each mark checks its row after every write and goes away once the
@@ -234,7 +234,7 @@
   });
 
   // ---- task title above the input box ---------------------------------------------
-  // r7Harness's `5m | Task title` row sits right above the input box's top border. It's
+  // r7-Harness's `5m | Task title` row sits right above the input box's top border. It's
   // drawn TITLE_SCALE like reply titles, and scrolls in a loop when it doesn't fit.
   const TASK_RE = /^\s*(\d+m|✦) \| \S/;
   const taskEl = document.createElement('div');
