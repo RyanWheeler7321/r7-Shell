@@ -171,6 +171,8 @@ function extrasAssets(settings) {
 // What renderer/index.html gets in its `cfg` query for one session.
 function rendererConfig(session, settings, gpu) {
   const font = { ...settings.font, ...(session.font || {}) };
+  // Ctrl+0 goes back to this, the template's own size, not a saved zoom.
+  font.defaultSize = font.size;
   if (settings.fontSizes?.[session.template]) font.size = settings.fontSizes[session.template];
   const tpl = readTemplate(session.template);
   return {

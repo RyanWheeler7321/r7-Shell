@@ -58,6 +58,9 @@ function nextId(template) {
 }
 
 function spawnPty(s) {
+  // The first window to attach to this program is told it's starting fresh (one already
+  // attached, waiting for it, was told so).
+  s.seen = s.clients.size > 0;
   const tpl = loadTemplates(STATE)[s.template];
   if (!tpl) throw new Error(`no template "${s.template}"`);
   const command = tpl.command || '';
@@ -125,7 +128,7 @@ function replayPrefix(s) {
   return out;
 }
 
-function createSession({ template, cwd, title, cols, rows, id, deferSpawn }) {
+function createSession({ template, cwd, title, cols, rows, id, deferSpawn, deferMs = 3000 }) {
   const templates = loadTemplates(STATE);
   const tpl = templates[template];
   if (!tpl) throw new Error(`no template "${template}" (have: ${Object.keys(templates).join(', ')})`);
@@ -151,7 +154,7 @@ function createSession({ template, cwd, title, cols, rows, id, deferSpawn }) {
   sessions.set(s.id, s);
   // A session about to get a window waits for it (up to 3s), so the program
   // starts at the window's real size and the window answers its first questions.
-  if (deferSpawn) s.spawnTimer = setTimeout(() => startPty(s), 3000);
+  if (deferSpawn) s.spawnTimer = setTimeout(() => startPty(s), deferMs);
   else spawnPty(s);
   saveSessions();
   return s;
@@ -430,7 +433,8 @@ function attachClient(ws, params) {
     if (ws.readyState !== ws.OPEN) return;
     // Header as JSON, then the snapshot itself as one binary frame.
     const snap = Buffer.from(replayPrefix(s) + s.serializer.serialize({ scrollback: SCROLLBACK }), 'utf8');
-    ws.send(JSON.stringify({ type: 'snapshot', bytes: snap.length, cols: s.cols, rows: s.rows, title: s.title, alive: s.alive, exitCode: s.exitCode }));
+    ws.send(JSON.stringify({ type: 'snapshot', bytes: snap.length, cols: s.cols, rows: s.rows, title: s.title, alive: s.alive, exitCode: s.exitCode, fresh: !s.seen }));
+    s.seen = true;
     ws.send(snap);
     for (const buf of client.pending) ws.send(buf);
     client.pending = null;
@@ -468,8 +472,10 @@ server.on('error', (e) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   log('info', 'daemon.start', { version: VERSION, pid: process.pid, port: PORT, node: process.version });
+  // Saved sessions wait for their windows (the app connects ~10s after a cold boot), so
+  // each program starts with its window up and the launch screen covers the real boot.
   for (const saved of readJson(SESSIONS_FILE, [])) {
-    try { createSession(saved); log('info', 'session.relaunch', { id: saved.id }); }
+    try { createSession({ ...saved, deferSpawn: true, deferMs: 30000 }); log('info', 'session.relaunch', { id: saved.id }); }
     catch (e) { log('error', 'session.relaunch', { id: saved.id, error: e.message }); }
   }
   saveSessions();

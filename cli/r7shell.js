@@ -17,8 +17,9 @@ const HELP = `r7shell ${VERSION}: sessions live in the daemon; windows are views
 
   ls                              sessions (id, template, alive, clients, title)
   templates                       session templates (${path.join(ROOT, 'templates')}, then extras/templates)
-  new <template> [--cwd D] [--title T] [--no-open] [--activate]
-  open <id> [--activate]          open a window for a session
+  new <template> [--cwd D] [--title T] [--no-open] [--activate] [--offscreen]
+  open <id> [--activate|--offscreen]  open a window (--offscreen: test window past every
+                                  monitor, no taskbar button, never focused)
   close <id>                      close its window, keep the session
   reopen                          bring back the last closed window (within 10 seconds)
   send <id> <text> [--enter]      type into a session (\\n \\r \\t \\e escapes work)
@@ -33,7 +34,7 @@ const HELP = `r7shell ${VERSION}: sessions live in the daemon; windows are views
   trace <id> on|off               raw output to logs/trace-<id>.log (debugging)
   shot <id> [--out PATH]          PNG of the window, without focusing it
   key <id> <Ctrl+V>               press a key inside the window (tests its shortcuts)
-  click <id> <x> <y>              left-click inside the window (tests links)
+  click <id> <x> <y> [--ctrl]     left-click inside the window (tests links)
   drag <id> <x1> <y1> <x2> <y2>   left-drag inside the window (tests selection)
   hover <id> <x> <y>              move the pointer inside the window (tests links)
   js <id> <code>                  run JavaScript in the window's page (tests)
@@ -149,6 +150,7 @@ async function main() {
       await startDaemon();
       const noOpen = has('--no-open');
       const activate = has('--activate');
+      const offscreen = has('--offscreen');
       // A template marked `startsSlow` starts at once instead of waiting for its window:
       // its program reads the terminal size a second later, well after the window attaches.
       const slow = loadTemplates(STATE)[template]?.startsSlow;
@@ -156,17 +158,18 @@ async function main() {
       if (!noOpen) {
         const h = await health();
         if (!h.app) await startApp(activate ? [] : ['--inactive']);
-        else await appCmd('open', { session: s.id, activate });
+        else await appCmd('open', { session: s.id, activate, offscreen });
       }
       return out(s.id);
     }
     case 'open': {
       const id = argv.shift() || die('open <id>');
       const activate = has('--activate');
+      const offscreen = has('--offscreen');
       const h = await health();
       if (!h) die('daemon is not running');
       if (!h.app) return startApp(activate ? [] : ['--inactive']);
-      return out(await appCmd('open', { session: id, activate }));
+      return out(await appCmd('open', { session: id, activate, offscreen }));
     }
     case 'close': return out(await appCmd('close', { session: argv.shift() || die('close <id>') }));
     case 'send': {
@@ -231,8 +234,8 @@ async function main() {
       return out(await appCmd('js', { session: id, code: argv.join(' ') }));
     }
     case 'click': {
-      const id = argv.shift() || die('click <id> <x> <y>');
-      return out(await appCmd('click', { session: id, x: Number(argv.shift()), y: Number(argv.shift()) }));
+      const id = argv.shift() || die('click <id> <x> <y> [--ctrl]');
+      return out(await appCmd('click', { session: id, x: Number(argv.shift()), y: Number(argv.shift()), ctrl: argv.includes('--ctrl') }));
     }
     case 'drag': {
       const id = argv.shift() || die('drag <id> <x1> <y1> <x2> <y2>');
