@@ -16,9 +16,19 @@ Sessions run in the background in WSL, so they survive the app restarting or cra
 - Links and file paths open on a plain click, and images in the output open full size
 - Templates (command, folder, theme, font) and themes as small JSON files
 
+![A game server console running in r7-Shell](assets/r7-console.gif)
+
 ## With r7-Harness
 
-r7-Harness and r7-Shell send each other a few extra things, so running r7-Harness in r7-Shell gives you bigger reply titles, pictures right inside replies, numbered questions you can click to start your answer, a bigger task title above the input box that scrolls when it's long, and mouse editing in the input box (drag to select, `Ctrl+click` to move the cursor).
+r7-Harness and r7-Shell send each other a few extra things, so running r7-Harness in r7-Shell gives you bigger reply titles, pictures right inside replies, numbered questions you can click to start your answer, a bigger task title above the input box, and mouse editing in the input box (drag to select, `Ctrl+click` to move the cursor).
+
+The input box has animations for sending a message, switching models with `Ctrl+P` and changing the thinking level with `Shift+Tab`.
+
+<p>
+  <img src="assets/r7-launch.gif" alt="Typing while r7-Harness starts" width="32%">
+  <img src="assets/r7-ask.gif" alt="Sending a message and answering a question" width="32%">
+  <img src="assets/r7-switch.gif" alt="Switching models and the thinking level" width="32%">
+</p>
 
 The r7harness template runs `r7harness launch`, so put it on your PATH first: `ln -s ~/r7-Harness/bin/r7harness ~/.local/bin/r7harness`.
 
