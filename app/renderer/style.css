@@ -77,10 +77,58 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg, #0
 .r7-image img {
   display: block; width: 0; height: 0; margin-top: 3px; border-radius: 10px;
 }
-/* Task title above the input box (marks.js): 1.3x, looping when it doesn't fit. */
+/* Hovering a picture (renderer.js): hand cursor and a softly breathing outline. */
+body.r7-picture #term, body.r7-picture #term * { cursor: pointer !important; }
+#picture-hover {
+  position: absolute; z-index: 4; pointer-events: none; opacity: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--r7-accent, #ff4fb8) 70%, transparent), 0 0 10px 1px color-mix(in srgb, var(--r7-accent, #ff4fb8) 35%, transparent);
+  transition: opacity 160ms ease;
+}
+#picture-hover.on { opacity: 1; animation: picture-breathe 1600ms ease-in-out infinite; }
+@keyframes picture-breathe {
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--r7-accent, #ff4fb8) 55%, transparent), 0 0 6px 0 color-mix(in srgb, var(--r7-accent, #ff4fb8) 25%, transparent); }
+  50% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--r7-accent, #ff4fb8) 90%, transparent), 0 0 14px 2px color-mix(in srgb, var(--r7-accent, #ff4fb8) 45%, transparent); }
+}
+/* Task title above the input box (marks.js): 1.3x, usage at normal size on its right. */
 #r7-task-title { position: absolute; z-index: 4; overflow: hidden; pointer-events: none; background: var(--bg); white-space: pre; }
-.r7-task-track { display: inline-flex; }
-.r7-task-line { padding-right: 3em; }
-.r7-task-track:not(.loop) .r7-task-line { padding-right: 0; }
-.r7-task-track.loop { animation: r7-task-loop linear infinite; }
-@keyframes r7-task-loop { from { transform: translateX(0); } to { transform: translateX(var(--shift)); } }
+.r7-task-line { position: absolute; left: 0; bottom: 3px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.r7-task-usage { position: absolute; bottom: 3px; text-align: right; }
+.r7-task-line .r7-scramble { color: var(--r7-accent); }
+
+/* Ctrl+P model chips (cycle.js): float over the chat just above the input box. */
+#r7-cycle { position: absolute; left: 0; right: 0; z-index: 4; pointer-events: none; white-space: pre;
+  opacity: 0; transform: translateY(4px); transition: opacity 220ms ease, transform 220ms ease; }
+#r7-cycle.on { opacity: 1; transform: none; transition: opacity 90ms ease-out, transform 150ms cubic-bezier(.2, .9, .3, 1); }
+#r7-cycle.away { transition: opacity 70ms ease-out, transform 70ms ease-out; }
+#r7-cycle .shade { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(to bottom, transparent 0, var(--bg) 24%); }
+#r7-cycle .chips, #r7-cycle .folder { position: absolute; left: 0; right: 0; top: 0; }
+#r7-cycle .folder { left: auto; text-align: right; }
+#r7-cycle .chip, #r7-cycle .sep { position: absolute; top: 0; text-align: center; }
+#r7-cycle .chip { transition: color 180ms ease; }
+#r7-cycle .chip.active { font-weight: bold; }
+#r7-cycle .sep { opacity: .7; transition: opacity 160ms ease; }
+#r7-cycle .sep.gone { opacity: 0; }
+/* The highlight is a chip with pointed ends, like the status line's own. */
+#r7-cycle .pill {
+  position: absolute; left: 0; top: 0; height: 100%; will-change: transform;
+  clip-path: polygon(0 50%, var(--cap, 8px) 0, calc(100% - var(--cap, 8px)) 0, 100% 50%, calc(100% - var(--cap, 8px)) 100%, var(--cap, 8px) 100%);
+  transition: transform 170ms cubic-bezier(.25, 1.35, .5, 1), width 170ms cubic-bezier(.25, 1.35, .5, 1), background-color 150ms ease;
+}
+#r7-cycle-fx { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 4; }
+/* Box animations (motion.js), over titles and pictures. */
+#r7-motion { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 8; }
+/* A finished reply's title (marks.js): a band of accent light sweeps through its letters
+   (the titles are near white, so plain white light wouldn't show). */
+.r7-shimmer {
+  position: absolute; left: 0; padding-right: .4em; white-space: pre; pointer-events: none;
+  background: linear-gradient(105deg, transparent 36%, var(--r7-accent, #ff4fb8) 45%, #fff 50%, var(--r7-accent, #ff4fb8) 55%, transparent 64%) no-repeat;
+  filter: drop-shadow(0 0 5px var(--r7-accent, #ff4fb8));
+  background-size: 250% 100%; -webkit-background-clip: text; background-clip: text;
+  animation: r7-shimmer 520ms cubic-bezier(.4, 0, .2, 1) both;
+}
+.r7-shimmer.wrap { white-space: normal; overflow-wrap: anywhere; }
+.r7-shimmer > span { color: transparent !important; }
+@keyframes r7-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+/* The same moment when the title has scrolled off: the bottom line flares once. */
+#glow.flare .bottom { animation: r7-flare 480ms ease-out; }
+@keyframes r7-flare { 0% { opacity: 1; height: 12px; } 30% { opacity: 1; height: 22px; filter: brightness(1.5); } 100% { opacity: 1; height: 12px; } }

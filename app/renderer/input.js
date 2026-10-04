@@ -5,25 +5,9 @@
 (() => {
   const launchReady = cfg.launch?.ready ? new RegExp(cfg.launch.ready, 'm') : null;
 
-  // r7-Harness's box is `╭──…╮`, then `│  text  │` rows, then `╰─ text ─╯`; text starts at column 3.
-  const TEXT_COL = 3;
+  // The box's text starts 3 columns in from its left border (renderer.js `findBox`).
+  const textCol = (box) => box.left + 3;
   const rowText = (y) => term.buffer.active.getLine(y)?.translateToString(true) ?? '';
-
-  // Viewport rows of the input box's top and bottom border, or null.
-  function findBox() {
-    const buf = term.buffer.active;
-    if (buf.type !== 'normal') return null;
-    for (let r = term.rows - 1; r >= 0; r--) {
-      if (!/^╰─.*─╯\s*$/.test(rowText(buf.viewportY + r))) continue;
-      for (let t = r - 1; t >= 0; t--) {
-        const text = rowText(buf.viewportY + t);
-        if (/^╭/.test(text)) return { top: t, bottom: r };
-        if (!/^│/.test(text)) return null;
-      }
-      return null;
-    }
-    return null;
-  }
 
   // The viewport row where the template's `launch.ready` pattern matches, or -1.
   function readyRow() {
@@ -44,12 +28,13 @@
 
   const ahead = { on: false, text: '', el: null, readyTimer: 0, giveUpTimer: 0 };
 
-  function startTypeAhead() {
+  function startTypeAhead(kind = '') {
     ahead.on = true;
+    ahead.text = '';
     ahead.el = document.createElement('div');
     ahead.el.id = 'type-ahead';
     screenEl.appendChild(ahead.el);
-    launch.start();
+    launch.start(kind);
     glide.hold = true;
     queueCursor();
     editHooks.unshift(typeAhead);
@@ -130,6 +115,8 @@
 
   function checkReady() {
     if (!ahead.on || ahead.readyTimer) return;
+    // A refresh: the old program's box is still up until it turns bracketed paste off on exit.
+    if (ahead.waitExit) { if (!term.modes.bracketedPasteMode) ahead.waitExit = false; return; }
     if (!term.modes.bracketedPasteMode || readyRow() < 0) return;
     // A short wait after the first ready frame, so its editor is listening.
     ahead.readyTimer = setTimeout(() => {
@@ -166,7 +153,7 @@
     ahead.el.remove();
     ahead.el = null;
     const top = readyRow();
-    launch.end(top >= 0 ? top : undefined);
+    launch.end(top >= 0 ? top : undefined, ready);
     const text = ahead.text;
     r7.log('info', 'typeahead.done', { session: cfg.session, ready, chars: text.length });
     if (!text) return;
@@ -174,15 +161,37 @@
     for (const chunk of pasteChunks(text)) sendInput(`\x1b[200~${chunk}\x1b[201~`);
   }
 
-  // Only the first attach of a session that's still starting: little output, no box yet.
+  // Only the first window on a program that's starting (the daemon's `fresh`), and only
+  // while its box isn't up yet; a reattach to a running program never plays it.
   snapshotListeners.push((msg, data) => {
     if (ahead.done) return;
     ahead.done = true;
     const showCursor = () => { glide.hold = false; queueCursor(); };
-    if (!launchReady || data.length > 4000 || msg.exitCode != null) return showCursor();
-    term.write('', () => { if (readyRow() >= 0) showCursor(); else startTypeAhead(); });
+    // (A daemon from before `fresh` existed: a small screen means it's starting.)
+    const fresh = msg.fresh ?? data.length <= 4000;
+    if (!launchReady || !fresh || msg.exitCode != null) return showCursor();
+    const decide = () => term.write('', () => { if (readyRow() >= 0) showCursor(); else startTypeAhead(); });
+    if (!document.hidden) return decide();
+    // A covered window holds the snapshot unparsed (renderer.js `hold`), so the screen is
+    // still blank here; it's judged once shown, after the held output is written.
+    const shown = () => {
+      if (document.hidden) return;
+      document.removeEventListener('visibilitychange', shown);
+      setTimeout(decide);
+    };
+    document.addEventListener('visibilitychange', shown);
   });
   term.onWriteParsed(checkReady);
+
+  // The program is about to restart in place (`OSC 7321;refresh`): the launch water covers the
+  // reprint and keys type ahead again until the new one is ready.
+  term.parser.registerOscHandler(7321, (data) => {
+    if (data !== 'refresh') return false;
+    if (ahead.on || !launchReady || document.hidden) return true;
+    ahead.waitExit = true;
+    startTypeAhead('refresh');
+    return true;
+  });
   term.onResize(() => { if (ahead.on) drawTypeAhead(); });
   colorListeners.push(() => { if (ahead.on) drawTypeAhead(); });
 
@@ -206,10 +215,10 @@
   screenEl.appendChild(sel.el);
 
   // The first column after the row's last character, or the text start for an empty row.
-  function rowEnd(row) {
+  function rowEnd(row, box) {
     const line = term.buffer.active.getLine(term.buffer.active.viewportY + row);
-    let end = TEXT_COL;
-    for (let x = TEXT_COL; x < term.cols - 3; x++) {
+    let end = textCol(box);
+    for (let x = textCol(box); x < box.right - 2; x++) {
       const cell = line.getCell(x);
       if (cell && cell.getChars() && cell.getChars() !== ' ') end = x + cell.getWidth();
     }
@@ -221,19 +230,21 @@
     const rect = screenEl.getBoundingClientRect();
     const row = Math.max(box.top + 1, Math.min(box.bottom, Math.floor((e.clientY - rect.top) / rowHeight())));
     const col = Math.round((e.clientX - rect.left) / cellWidth());
-    return { row, col: Math.max(TEXT_COL, Math.min(col, rowEnd(row))) };
+    return { row, col: Math.max(textCol(box), Math.min(col, rowEnd(row, box))) };
   }
 
   function inBoxText(e, box) {
     const rect = screenEl.getBoundingClientRect();
     const row = Math.floor((e.clientY - rect.top) / rowHeight());
     const col = Math.floor((e.clientX - rect.left) / cellWidth());
-    return row > box.top && row <= box.bottom && col >= 1 && col < term.cols - 1;
+    return row > box.top && row <= box.bottom && col > box.left && col < box.right;
   }
 
   const before = (a, b) => a.row < b.row || (a.row === b.row && a.col <= b.col);
   function ordered() { return before(sel.anchor, sel.head) ? [sel.anchor, sel.head] : [sel.head, sel.anchor]; }
-  const boxRowsText = (box) => { const t = []; for (let r = box.top; r <= box.bottom; r++) t.push(rowText(term.buffer.active.viewportY + r)); return t.join('\n'); };
+  // Only the text rows: the borders carry a ticking timer and spinner while r7-Harness works,
+  // which used to drop a fresh selection on the next tick after the mouse let go.
+  const boxRowsText = (box) => { const t = [box.bottom - box.top]; for (let r = box.top + 1; r < box.bottom; r++) t.push(rowText(term.buffer.active.viewportY + r)); return t.join('\n'); };
 
   function hasSelection() { return !!sel.anchor && (sel.anchor.row !== sel.head.row || sel.anchor.col !== sel.head.col); }
 
@@ -245,10 +256,11 @@
     const [a, b] = ordered();
     const cw = cellWidth();
     const rh = rowHeight();
-    const color = cfg.theme.selectionBackground || '#9367FB';
+    const color = selectionColor();
+    const start = textCol(sel.box);
     for (let r = a.row; r <= b.row; r++) {
-      const from = r === a.row ? a.col : TEXT_COL;
-      const to = r === b.row ? b.col : Math.max(rowEnd(r), TEXT_COL + 1);
+      const from = r === a.row ? a.col : start;
+      const to = r === b.row ? b.col : Math.max(rowEnd(r, sel.box), start + 1);
       if (to <= from) continue;
       const div = document.createElement('div');
       div.style.cssText = `left:${from * cw}px;top:${r * rh}px;width:${(to - from) * cw}px;height:${rh}px;background:${color}88`;
@@ -267,12 +279,12 @@
     const lines = [];
     for (let r = a.row; r <= b.row; r++) {
       const text = rowText(term.buffer.active.viewportY + r);
-      lines.push([...text].slice(r === a.row ? a.col : TEXT_COL, r === b.row ? b.col : rowEnd(r)).join(''));
+      lines.push([...text].slice(r === a.row ? a.col : textCol(sel.box), r === b.row ? b.col : rowEnd(r, sel.box)).join(''));
     }
     return lines.join('\n');
   }
 
-  const editCmd = (...spots) => `\x1b[7321;${spots.map((p) => `${p.row - sel.box.top - 1};${p.col - TEXT_COL}`).join(';')}~`;
+  const editCmd = (...spots) => `\x1b[7321;${spots.map((p) => `${p.row - sel.box.top - 1};${p.col - textCol(sel.box)}`).join(';')}~`;
 
   function editReady(e) {
     if (e.button !== 0 || ahead.on || term.modes.mouseTrackingMode !== 'none') return null;
@@ -307,15 +319,16 @@
     if (e.detail === 2) {
       // Double-click: the word under the pointer.
       const text = [...rowText(term.buffer.active.viewportY + spot.row)];
-      let from = Math.min(spot.col, rowEnd(spot.row) - 1);
+      const end = rowEnd(spot.row, box);
+      let from = Math.min(spot.col, end - 1);
       let to = from;
-      while (from > TEXT_COL && /\S/.test(text[from - 1] || '')) from--;
-      while (to < rowEnd(spot.row) && /\S/.test(text[to] || '')) to++;
+      while (from > textCol(box) && /\S/.test(text[from - 1] || '')) from--;
+      while (to < end && /\S/.test(text[to] || '')) to++;
       sel.anchor = { row: spot.row, col: from };
       sel.head = { row: spot.row, col: to };
     } else if (e.detail >= 3) {
-      sel.anchor = { row: box.top + 1, col: TEXT_COL };
-      sel.head = { row: box.bottom, col: rowEnd(box.bottom) };
+      sel.anchor = { row: box.top + 1, col: textCol(box) };
+      sel.head = { row: box.bottom, col: rowEnd(box.bottom, box) };
     } else {
       sel.anchor = spot;
       sel.head = spot;
@@ -374,7 +387,7 @@
 
   function moveTo(box, spot) {
     if (harness.mouseEditing) {
-      sendRaw(`\x1b[7321;${spot.row - box.top - 1};${spot.col - TEXT_COL}~`);
+      sendRaw(`\x1b[7321;${spot.row - box.top - 1};${spot.col - textCol(box)}~`);
       return;
     }
     const buf = term.buffer.active;

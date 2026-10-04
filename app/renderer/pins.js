@@ -53,7 +53,10 @@
     const entries = [];
     for (const raw of value) {
       if (!raw || typeof raw !== 'object' || !raw.id || !Array.isArray(raw.media)) continue;
-      const media = raw.media.map(toMedia).filter(Boolean).slice(0, MAX_MEDIA);
+      // The entry id goes on each file URL, so a file pinned again after it was rewritten
+      // shows its new contents instead of Chromium's cached copy.
+      const media = raw.media.map(toMedia).filter(Boolean).slice(0, MAX_MEDIA)
+        .map((m) => ({ ...m, version: encodeURIComponent(String(raw.id)) }));
       if (media.length) entries.push({ id: String(raw.id), media });
     }
     return entries;
@@ -135,7 +138,7 @@
   }
 
   function makeMedia(media, still) {
-    const url = fileUrl(media.path);
+    const url = fileUrl(media.path) + (media.version ? `?v=${media.version}` : '');
     if (media.kind === 'image') {
       const img = document.createElement('img');
       img.decoding = 'async';
@@ -473,6 +476,42 @@
     mount();
     clearPreview();
     renderStrip();
+    // Not for the pins already there when the window opens.
+    if (added && performance.now() > 2500) arrive(entries[0]);
+  }
+
+  // A new entry pops into the strip with a small bounce. When its picture is showing in a
+  // reply, a copy of it flies from there into the strip first.
+  function arrive(entry) {
+    const strip = S.strip;
+    if (!strip || strip.hidden || document.hidden) return;
+    // The class comes off when it ends, or showing the strip again (a resize) replays it.
+    const pop = () => {
+      strip.classList.remove('arrive');
+      void strip.offsetWidth;
+      strip.classList.add('arrive');
+      strip.addEventListener('animationend', () => strip.classList.remove('arrive'), { once: true });
+    };
+    // Pins carry Windows paths, reply pictures may carry WSL ones.
+    const same = (p) => String(p).replace(/\\/g, '/').replace(/^\/mnt\/([a-z])\//i, '$1:/').toLowerCase();
+    const paths = new Set(entry.media.map((m) => same(m.path)));
+    const from = [...document.querySelectorAll('.r7-image img')].find((img) => paths.has(same(img.dataset.path)) && img.offsetParent && img.width);
+    const tile = S.tiles.get(0)?.el;
+    if (!from || !tile) { pop(); return; }
+    const a = from.getBoundingClientRect();
+    const b = tile.getBoundingClientRect();
+    if (a.bottom < 0 || a.top > window.innerHeight) { pop(); return; }
+    const fly = from.cloneNode();
+    fly.className = 'r7-pins-fly';
+    Object.assign(fly.style, { left: `${a.left}px`, top: `${a.top}px`, width: `${a.width}px`, height: `${a.height}px` });
+    document.body.append(fly);
+    void fly.offsetWidth; // styled where it starts, so the move animates
+    strip.style.visibility = 'hidden';
+    requestAnimationFrame(() => {
+      fly.style.transform = `translate(${b.left - a.left}px, ${b.top - a.top}px) scale(${b.width / a.width}, ${b.height / a.height})`;
+      fly.style.opacity = '0.4';
+    });
+    setTimeout(() => { fly.remove(); strip.style.visibility = ''; pop(); }, 240);
   }
 
   pinListeners.push(update);

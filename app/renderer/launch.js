@@ -6,7 +6,7 @@
 
 const launch = (() => {
   const FINISH_MS = 700;
-  const KEY = `r7.bootMs.${cfg.template}`;
+  let key = '';
   let canvas = null;
   let ctx = null;
   let frame = 0;
@@ -15,7 +15,7 @@ const launch = (() => {
   let level = 0;
   let near = -1;
   let origin = { x: 0, y: 0 };
-  const expected = Number(localStorage.getItem(KEY)) || 3000;
+  let expected = 3000;
 
   // The theme's blue slot is its accent: a lighter tint of it on the surface, the accent
   // itself below, and a darker shade going deeper.
@@ -30,7 +30,14 @@ const launch = (() => {
     return { surface: mix(accent, '#ffffff', 0.35), shallow: accent, deep: mix(accent, bg, 0.45) };
   }
 
-  function start() {
+  // `kind` keeps a separate pace, so a refresh (the program restarting in place) has its own.
+  function start(kind = '') {
+    remove();
+    key = `r7.bootMs.${cfg.template}${kind ? `.${kind}` : ''}`;
+    expected = Number(localStorage.getItem(key)) || 3000;
+    endedAt = 0;
+    near = -1;
+    level = 0;
     canvas = document.createElement('canvas');
     canvas.id = 'launch';
     screenEl.appendChild(canvas);
@@ -40,14 +47,16 @@ const launch = (() => {
   }
 
   // `box` is the input box's top row, so the ripple starts there.
-  function end(box) {
+  // `ready` false: the program never came up and type-ahead gave up, which says nothing
+  // about how long a start takes, so the pace isn't kept.
+  function end(box, ready = true) {
     if (!canvas || endedAt) return;
     endedAt = performance.now();
     const boot = endedAt - startedAt;
     // Next time's pace: mostly the last boot, a little of the ones before.
-    localStorage.setItem(KEY, String(Math.round(expected * 0.3 + boot * 0.7)));
+    if (ready) localStorage.setItem(key, String(Math.round(expected * 0.3 + boot * 0.7)));
     origin = { x: 4, y: box ? box + 1 : 3 };
-    r7.log('info', 'launch.done', { session: cfg.session, bootMs: Math.round(boot) });
+    r7.log('info', 'launch.done', { session: cfg.session, bootMs: Math.round(boot), key });
   }
 
   function remove() {

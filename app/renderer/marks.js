@@ -30,18 +30,18 @@
   }
 
   function drop(mark) {
-    mark.deco?.dispose();
+    mark.el?.remove();
     mark.marker.dispose();
     const i = marks.indexOf(mark);
     if (i >= 0) marks.splice(i, 1);
   }
 
   // The row's text from the mark on, as colored spans.
-  function titleSpans(y, x, spans = []) {
+  function titleSpans(y, x, spans = [], end = Infinity) {
     const line = term.buffer.active.getLine(y);
     if (!line) return spans;
     let cell;
-    for (let i = x; i < line.length; i++) {
+    for (let i = x; i < Math.min(end, line.length); i++) {
       cell = line.getCell(i, cell);
       if (!cell || cell.getWidth() === 0) continue;
       const ch = cell.getChars() || ' ';
@@ -103,7 +103,6 @@
   function drawImage(mark, el) {
     el.classList.add('r7-image');
     const img = document.createElement('img');
-    img.src = fileUrl(mark.path);
     img.dataset.path = mark.path;
     img.alt = '';
     // Sized to the picture itself so the rounded corners sit on it.
@@ -116,24 +115,42 @@
     });
     img.addEventListener('error', () => r7.log('warn', 'marks.image_error', { session: cfg.session, path: mark.path }));
     el.replaceChildren(img);
+    const version = r7.fileVersion ? r7.fileVersion(mark.path) : Promise.resolve(0);
+    version.catch(() => 0).then((v) => { img.src = fileUrl(mark.path) + (v ? `?v=${v}` : ''); });
   }
 
-  function place(mark) {
-    const opts = mark.kind === 'title'
-      ? { marker: mark.marker, x: mark.x, width: Math.max(1, term.cols - mark.x), height: 1, layer: 'top' }
-      : { marker: mark.marker, x: mark.x, width: Math.min(mark.cols, term.cols - mark.x), height: mark.rows, layer: 'top' };
-    mark.deco = term.registerDecoration(opts);
-    if (!mark.deco) return drop(mark);
-    let drawnAt = '';
-    mark.deco.onRender((el) => {
-      mark.el = el;
-      // Redraw when the font size changes; otherwise the element is kept as is.
-      const key = `${term.options.fontSize}|${rowHeight()}`;
-      if (key === drawnAt) return;
-      drawnAt = key;
-      if (mark.kind === 'title') drawTitle(mark, el);
-      else drawImage(mark, el);
-    });
+  // Titles and pictures aren't xterm decorations: xterm draws a new decoration, and moves
+  // one when the screen shifts, a frame after the text, so a title showed plain for a frame
+  // on every shift (Ctrl+J), and it hides one while its first row is above the screen.
+  // They're placed here in the same render instead, shown while any of their rows is on
+  // screen (the extra row under a smooth scroll included), in the decoration layer so
+  // they sit and glide (fade.js) the same.
+  function placeMark(mark) {
+    const buf = term.buffer.active;
+    const t = mark.marker.line - buf.viewportY;
+    if (buf.type !== 'normal' || t + mark.rows <= 0 || t > term.rows) {
+      if (mark.el) mark.el.style.display = 'none';
+      return;
+    }
+    if (!mark.el) {
+      mark.el = document.createElement('div');
+      mark.el.className = `xterm-decoration xterm-decoration-top-layer r7-${mark.kind}`;
+      (screenEl.querySelector('.xterm-decoration-container') || screenEl).append(mark.el);
+    }
+    const el = mark.el;
+    const rowPx = rowHeight();
+    const cw = cellWidth();
+    const cols = mark.kind === 'image' ? Math.min(mark.cols, term.cols - mark.x) : term.cols - mark.x;
+    el.style.display = 'block';
+    el.style.top = `${t * rowPx}px`;
+    el.style.left = `${mark.x * cw}px`;
+    el.style.width = `${Math.round(Math.max(1, cols) * cw)}px`;
+    el.style.height = `${(mark.kind === 'image' ? mark.rows : 1) * rowPx}px`;
+    const key = `${term.options.fontSize}|${rowPx}|${term.cols}`;
+    if (key === mark.drawnAt) return;
+    mark.drawnAt = key;
+    if (mark.kind === 'image') drawImage(mark, el);
+    else drawTitle(mark, el);
   }
 
   function still(mark) {
@@ -163,11 +180,27 @@
           mark.rows++;
         }
       }
-      // A redrawn row replaces the mark it had.
-      for (const old of marks.filter((m) => m.marker.line === mark.marker.line && m.kind === mark.kind)) drop(old);
+      // A redrawn row replaces the mark it had. The new mark takes over its element, which
+      // stays where it is until the render that shows the new text moves it (onRender):
+      // placed now, it moved a frame ahead of the text and the plain title showed under it.
+      for (const old of marks.filter((m) => m.marker.line === mark.marker.line && m.kind === mark.kind)) {
+        if (old.el && !mark.el) {
+          mark.el = old.el;
+          if (sameLook(old, mark)) mark.drawnAt = old.drawnAt;
+          old.el = null;
+        }
+        drop(old);
+      }
       marks.push(mark);
-      place(mark);
     }
+    // The render that shows these rows places them. This only covers a write that brings
+    // no render; a frame callback here could run before xterm's and show a title early.
+    setTimeout(() => { for (const mark of marks) if (!mark.el) placeMark(mark); }, 100);
+  }
+
+  function sameLook(a, b) {
+    if (a.kind === 'image') return a.path === b.path && a.rows === b.rows && a.cols === b.cols && a.x === b.x;
+    return a.rows === b.rows && a.x === b.x && JSON.stringify(a.spans) === JSON.stringify(b.spans);
   }
 
   // A mark whose row was redrawn goes when the screen shows the change, not when the
@@ -181,6 +214,7 @@
       if (y >= 0 && (last < top + start || y > top + end)) continue;
       if (!still(mark)) drop(mark);
     }
+    for (const mark of marks) placeMark(mark);
   });
 
   // ---- clickable questions ------------------------------------------------------
@@ -218,16 +252,55 @@
         activate: () => {
           const paste = term.modes.bracketedPasteMode ? `\x1b[200~${answer}\x1b[201~` : answer;
           followBottom = true;
-          sendInput(paste);
           term.focus();
           r7.log('info', 'marks.question', { session: cfg.session, marker: m[2] });
+          // The number hops into the box and is typed when it lands, or at once if a
+          // key comes first, so it always goes ahead of what you type next.
+          const buf = term.buffer.active;
+          const box = findBox();
+          const from = { x, y: y - 1 - buf.viewportY };
+          const to = box && buf.cursorY > box.top && buf.cursorY <= box.bottom
+            ? { x: buf.cursorX, y: buf.cursorY } : box ? { x: box.left + 3, y: box.top + 1 } : null;
+          if (!to || from.y < 0 || from.y >= term.rows) { sendInput(paste); return; }
+          let sent = false;
+          const send = () => {
+            if (sent) return;
+            sent = true;
+            // Taken out after this key's own pass through the hooks.
+            setTimeout(() => editHooks.splice(editHooks.indexOf(early), 1));
+            sendInput(paste);
+          };
+          const early = () => { if (!sent) send(); return false; };
+          editHooks.unshift(early);
+          motion.hop(`${number}:`, from, to, ASK_COLOR, send);
         },
       }]);
     },
   });
 
+  // ---- a reply finishing while the window is in use ---------------------------------
+  // Its title gets a quick sweep of light; when it has scrolled off, the bottom line flares.
+  let lastPhase = '';
+  attentionListeners.push((data) => {
+    const finished = data.phase === 'waiting' && lastPhase !== 'waiting';
+    lastPhase = data.phase;
+    if (!finished || !data.completedMs || !document.hasFocus() || Date.now() - data.completedMs > 3000) return;
+    const buf = term.buffer.active;
+    const title = marks.filter((m) => m.kind === 'title').sort((a, b) => b.marker.line - a.marker.line)[0];
+    const inner = title?.el?.querySelector('.r7-title-text');
+    const onScreen = title && title.marker.line >= buf.viewportY && title.marker.line < buf.viewportY + term.rows;
+    if (!inner || !onScreen) { flareBottom(); return; }
+    // A copy of the title's letters over it, showing only a band of light clipped to the
+    // glyphs, so the background around them stays dark.
+    title.el.querySelector('.r7-shimmer')?.remove();
+    const light = inner.cloneNode(true);
+    light.className = `r7-shimmer${inner.classList.contains('wrap') ? ' wrap' : ''}`;
+    light.querySelector('.r7-title-sel')?.remove();
+    title.el.append(light);
+    setTimeout(() => light.remove(), 600);
+  });
+
   term.onWriteParsed(() => {
-    queueTaskTitle();
     if (checkQueued || (!pending.length && !marks.length)) return;
     checkQueued = true;
     queueMicrotask(settle);
@@ -235,19 +308,91 @@
 
   // ---- task title above the input box ---------------------------------------------
   // r7-Harness's `5m | Task title` row sits right above the input box's top border. It's
-  // drawn TITLE_SCALE like reply titles, and scrolls in a loop when it doesn't fit.
+  // drawn TITLE_SCALE like reply titles. When the box's top border is too narrow, the usage
+  // can sit at this row's right; it stays normal size there, stacks its two halves when
+  // the title needs the room, and goes away when even that doesn't fit.
   const TASK_RE = /^\s*(\d+m|✦) \| \S/;
   const taskEl = document.createElement('div');
   taskEl.id = 'r7-task-title';
   screenEl.appendChild(taskEl);
-  let taskQueued = false;
   let taskDrawn = '';
   let taskY = -1;
+  // The last task title seen whole: r7-Harness cuts it to fit beside the usage at normal size,
+  // and the room this layout frees can show it whole again.
+  let taskFull = null;
+  // The title as last drawn, so a new one can decode from it.
+  let taskPlain = '';
+  let taskDecode = null; // { start, changed: [index in title, settle ms, glyph, glyph ms] }
+  let attachedAt = performance.now();
+  snapshotListeners.push(() => { attachedAt = performance.now(); });
 
-  function queueTaskTitle() {
-    if (taskQueued || !harness.on) return;
-    taskQueued = true;
-    setTimeout(drawTaskTitle, 30);
+  // Decrypting: every character that changed turns to dim scrambled symbols in the accent
+  // colour at once and keeps re-rolling; a bright front runs left to right, each symbol
+  // brightening and rolling faster as its turn nears, then locking in with a white flash
+  // that cools to its own colour. About 1.6s for a full title; unchanged characters (the
+  // shared start, a kept minute count) stay. It survives r7-Harness redrawing the same title
+  // meanwhile (drawTaskTitle reapplies it to the new line).
+  const GLYPHS = [...'ABCDEFGHJKLMNPQRSTUVWXYZabdefhkmnqrstxz0123456789#%&*+=<>/\\$@?!'];
+  const roll = () => GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
+  const LOCK_MS = 260; // the white flash as a letter locks in
+  const NEAR_MS = 450; // how far ahead of its turn a symbol starts brightening
+
+  function decodeTitle(old, text) {
+    const before = [...old];
+    const changed = [];
+    [...text].forEach((c, i) => { if (c !== ' ' && c !== before[i]) changed.push(i); });
+    if (!changed.length) { taskDecode = null; return; }
+    const step = Math.min(90, 1150 / changed.length);
+    taskDecode = {
+      start: performance.now(),
+      changed: changed.map((i, k) => ({ i, settle: 280 + k * step + Math.random() * 220, glyph: roll(), next: 0 })),
+    };
+    applyDecode();
+  }
+
+  function applyDecode() {
+    const d = taskDecode;
+    const el = taskEl.querySelector('.r7-task-line');
+    if (!d || !el) return;
+    const t = performance.now() - d.start;
+    const live = new Map(); // index -> { glyph, near } while scrambled, { lock } while flashing
+    for (const c of d.changed) {
+      if (t >= c.settle + LOCK_MS) continue;
+      if (t >= c.settle) { live.set(c.i, { lock: 1 - (t - c.settle) / LOCK_MS }); continue; }
+      const near = Math.max(0, 1 - (c.settle - t) / NEAR_MS);
+      if (t >= c.next) { c.glyph = roll(); c.next = t + (90 - 60 * near) * (0.7 + Math.random() * 0.6); }
+      live.set(c.i, { glyph: c.glyph, near });
+    }
+    let g = 0;
+    for (const span of el.children) {
+      const text = [...(span.dataset.text ??= span.textContent)];
+      const nodes = [];
+      let run = '';
+      text.forEach((c, i) => {
+        const s = live.get(g + i);
+        if (!s) { run += c; return; }
+        if (run) { nodes.push(run); run = ''; }
+        const x = document.createElement('span');
+        if (s.lock !== undefined) {
+          const k = s.lock ** 1.5;
+          x.textContent = c;
+          x.style.color = `color-mix(in srgb, #fff ${Math.round(k * 100)}%, currentColor)`;
+          x.style.textShadow = `0 0 ${Math.round(4 + 10 * k)}px color-mix(in srgb, var(--r7-accent) ${Math.round(k * 100)}%, transparent)`;
+        } else {
+          x.className = 'r7-scramble';
+          x.textContent = s.glyph;
+          x.style.opacity = (0.28 + 0.72 * s.near ** 2).toFixed(2);
+          if (s.near > 0.6) x.style.textShadow = `0 0 ${Math.round(8 * s.near)}px var(--r7-accent)`;
+        }
+        nodes.push(x);
+      });
+      if (run) nodes.push(run);
+      span.replaceChildren(...nodes);
+      g += text.length;
+    }
+    if (!live.size) { taskDecode = null; return; }
+    if (d.frame) return;
+    d.frame = requestAnimationFrame(() => { d.frame = 0; if (taskDecode === d) applyDecode(); });
   }
 
   function findTaskRow() {
@@ -260,30 +405,49 @@
   }
 
   function drawTaskTitle() {
-    taskQueued = false;
     const r = findTaskRow();
     if (r < 0) { taskEl.style.display = 'none'; taskDrawn = ''; taskY = -1; return; }
     const y = term.buffer.active.viewportY + r;
     taskY = y;
-    const x = rowText(y).search(/\S/);
-    const spans = titleSpans(y, x);
+    const text = rowText(y);
+    const x = text.search(/\S/);
+    // The usage, if it's on this row, starts after the title's first run of 2+ spaces.
+    const gapAt = text.slice(x).search(/ {2,}\S/);
+    const chipX = gapAt < 0 ? -1 : text.slice(x + gapAt).search(/\S/) + x + gapAt;
+    let spans = titleSpans(y, x, [], chipX < 0 ? Infinity : chipX);
+    const plain = spans.map((s) => s.text).join('');
+    if (!plain.endsWith('…')) taskFull = spans;
+    else if (taskFull && taskFull.map((s) => s.text).join('').startsWith(plain.slice(0, -1))) spans = taskFull;
+    const chip = chipX < 0 ? [] : titleSpans(y, chipX);
+    const chipEnd = chipX + chip.reduce((n, s) => n + s.text.length, 0);
+    const aboveBlank = r > 0 && !(rowText(y - 1) || '').trim();
     const rowPx = rowHeight();
-    const key = `${r}|${x}|${term.options.fontSize}|${rowPx}|${term.cols}|` + spans.map((s) => s.color + s.text).join('');
+    const key = `${r}|${x}|${chipX}|${aboveBlank}|${term.options.fontSize}|${rowPx}|${term.cols}|`
+      + spans.concat(chip).map((s) => s.color + s.text).join('');
     taskEl.style.display = '';
     if (key === taskDrawn) return;
     taskDrawn = key;
-    // Bottom-aligned on its row, so the extra height goes up into the blank row above.
-    taskEl.style.left = `${x * cellWidth()}px`;
-    taskEl.style.width = `${(term.cols - x) * cellWidth()}px`;
-    taskEl.style.top = `${(r + 1) * rowPx - rowPx * TITLE_SCALE}px`;
+    const cw = cellWidth();
+    const width = (term.cols - x) * cw;
     // A few pixels past the row, so tall glyphs like | in the plain row don't peek out.
-    taskEl.style.height = `${rowPx * TITLE_SCALE + 3}px`;
-    taskEl.style.font = `${term.options.fontSize * TITLE_SCALE}px ${term.options.fontFamily}`;
-    taskEl.style.lineHeight = `${rowPx * TITLE_SCALE}px`;
-    const line = () => {
-      const el = document.createElement('span');
-      el.className = 'r7-task-line';
-      for (const s of spans) {
+    const place = (height) => {
+      // Bottom-aligned on its row, so the extra height goes up into the blank row above.
+      taskEl.style.top = `${(r + 1) * rowPx - height}px`;
+      taskEl.style.height = `${height + 3}px`;
+    };
+    taskEl.style.left = `${x * cw}px`;
+    taskEl.style.width = `${width}px`;
+    place(rowPx * TITLE_SCALE);
+    const line = (parts, className, scale) => {
+      const el = document.createElement('div');
+      el.className = className;
+      el.style.font = `${term.options.fontSize * scale}px ${term.options.fontFamily}`;
+      el.style.lineHeight = `${rowPx * scale}px`;
+      // A cut-off title's ellipsis takes the block's own color and weight.
+      const tail = parts[parts.length - 1];
+      if (tail) el.style.color = tail.color;
+      if (tail?.bold) el.style.fontWeight = 'bold';
+      for (const s of parts) {
         const span = document.createElement('span');
         span.textContent = s.text;
         span.style.color = s.color;
@@ -292,22 +456,53 @@
       }
       return el;
     };
-    const track = document.createElement('div');
-    track.className = 'r7-task-track';
-    track.append(line());
-    taskEl.replaceChildren(track);
-    const overflow = track.scrollWidth - taskEl.clientWidth;
-    if (overflow <= 0) return;
-    // Two copies side by side, sliding one copy's width, so the loop is seamless.
-    track.append(line());
-    const shift = track.firstChild.getBoundingClientRect().width;
-    track.style.setProperty('--shift', `${-shift}px`);
-    track.style.animationDuration = `${Math.max(6, shift / 40)}s`;
-    track.classList.add('loop');
+    const title = line(spans, 'r7-task-line', TITLE_SCALE);
+    taskEl.replaceChildren(title);
+    const shownText = spans.map((s) => s.text).join('');
+    if (shownText !== taskPlain) {
+      // Not on the reprint after a reattach, which only redraws the same title.
+      if (taskPlain || performance.now() - attachedAt > 1500) decodeTitle(taskPlain, shownText);
+      taskPlain = shownText;
+    } else applyDecode();
+    if (!chip.length) return;
+    // The usage keeps its own right edge, two cells clear of the title.
+    const right = (term.cols - chipEnd) * cw;
+    const room = width - right - 2 * cw - title.scrollWidth;
+    const box = document.createElement('div');
+    box.className = 'r7-task-usage';
+    box.style.right = `${right}px`;
+    box.append(line(chip, '', 1));
+    taskEl.append(box);
+    if (box.scrollWidth <= room) return;
+    // Stacked: split at the ` · ` nearest the middle, the first half on the blank row above.
+    const chipText = chip.map((s) => s.text).join('');
+    let cut = -1;
+    for (let i = chipText.indexOf(' · '); i >= 0; i = chipText.indexOf(' · ', i + 1)) {
+      if (cut < 0 || Math.abs(i - chipText.length / 2) < Math.abs(cut - chipText.length / 2)) cut = i;
+    }
+    if (aboveBlank && cut >= 0) {
+      const halves = [[], []];
+      let at = 0;
+      for (const s of chip) {
+        const a = s.text.slice(0, Math.max(0, cut - at));
+        const b = s.text.slice(Math.max(0, cut + 3 - at));
+        if (a) halves[0].push({ ...s, text: a });
+        if (b && at + s.text.length > cut + 3) halves[1].push({ ...s, text: b });
+        at += s.text.length;
+      }
+      box.replaceChildren(line(halves[0], '', 1), line(halves[1], '', 1));
+      if (box.scrollWidth <= room) {
+        place(Math.max(rowPx * 2, rowPx * TITLE_SCALE));
+        return;
+      }
+    }
+    box.remove();
   }
 
-  window.addEventListener('resize', queueTaskTitle);
-  term.onScroll(queueTaskTitle);
+  // Drawn in the render that shows its row, so it moves with the text. On a timer it
+  // moved a frame or two after the row did, and the title showed small on every Ctrl+J.
+  // A covered window renders nothing, and redraws everything once it's shown.
+  term.onRender(() => { if (harness.on) drawTaskTitle(); });
 
   // A selection over a 1.3x title highlights the title's own letters, scaled like them:
   // the selected columns of its row, or all of it when the title wraps.

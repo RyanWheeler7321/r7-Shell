@@ -109,6 +109,15 @@ window.addEventListener('focus', () => {
 });
 window.addEventListener('blur', drawGlow);
 
+// A reply that finished while the window is in use: marks.js lights its title, or asks
+// for this flare of the bottom line when the title has scrolled off.
+function flareBottom() {
+  glowEl.classList.remove('flare');
+  void glowEl.offsetWidth;
+  glowEl.classList.add('flare');
+  setTimeout(() => glowEl.classList.remove('flare'), 500);
+}
+
 // The left divider only parts a window from one beside it: at its screen's left edge
 // it would bleed a stripe of colour against the next monitor. Windows report no moves
 // to the page, so the position is checked once a second.

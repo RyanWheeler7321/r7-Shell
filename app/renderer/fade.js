@@ -122,13 +122,8 @@
   // Rows from the input box's top border down (and the task title row above it) never fade
   // or glide.
   function boxTop(rows) {
-    let bottom = -1;
-    for (let r = rows.length - 1; r >= 0; r--) {
-      const text = rows[r].text;
-      if (bottom < 0 && /^╰/.test(text)) bottom = r;
-      else if (bottom >= 0 && /^╭/.test(text)) return r - 1;
-    }
-    return rows.length;
+    const box = findBox();
+    return box ? box.top - 1 : rows.length;
   }
 
   const blank = (text) => !text.trim();
@@ -374,14 +369,15 @@
     clearTimer = setTimeout(draw, FADE_MS + SPREAD_MS + GLIDE_MS);
   }
 
-  // The 1.3x titles and pictures sit over their rows; they glide with them.
+  // The 1.3x titles and pictures sit over their rows; they glide with them. A picture
+  // partly above the screen glides with its top row on screen.
   let marksMoved = false;
   function moveMarks(g, now, ch) {
     if (!g && !marksMoved) return;
     if (g && g !== glide) return;
     marksMoved = !!g;
     for (const el of screenEl.querySelectorAll('.xterm-decoration')) {
-      const row = Math.round(parseFloat(el.style.top) / ch);
+      const row = Math.max(0, Math.round(parseFloat(el.style.top) / ch));
       const off = g && row < g.stop ? offsetAt(g, row, now) : 0;
       el.style.transform = Math.abs(off) > 0.01 ? `translateY(${Math.round(off * ch)}px)` : '';
     }
