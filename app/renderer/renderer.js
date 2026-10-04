@@ -40,6 +40,7 @@ term.loadAddon(fit);
 const unicode = new Unicode11Addon.Unicode11Addon();
 term.loadAddon(unicode);
 term.unicode.activeVersion = '11';
+
 // A plain click opens links (dragging still selects).
 term.loadAddon(new WebLinksAddon.WebLinksAddon((_e, url) => r7.openExternal(url)));
 const search = new SearchAddon.SearchAddon();
@@ -148,7 +149,8 @@ function leaveBottom(why) {
   r7.log('info', 'scroll.leave', { session: cfg.session, why });
 }
 function writeOutput(data) {
-  if (document.hidden) { hold(data); return; }
+  // Held output still waiting to be written keeps new output behind it, in order.
+  if (document.hidden || heldBytes) { hold(data); return; }
   term.write(data, keepBottom);
 }
 function keepBottom() {
@@ -175,6 +177,11 @@ document.addEventListener('visibilitychange', () => {
   // A scroll animation can't run while hidden; one still under way jumps to its end.
   if (scroll.frame) { cancelAnimationFrame(scroll.frame); scroll.frame = 0; placeScroll(scroll.target); keepBottom(); }
   if (!heldBytes) return;
+  const shown = performance.now();
+  requestAnimationFrame(() => catchUp(shown));
+});
+function catchUp(shown) {
+  if (document.hidden || !heldBytes) return;
   const t0 = performance.now();
   const bytes = heldBytes;
   if (bytes > HOLD_MAX) {
@@ -193,9 +200,34 @@ document.addEventListener('visibilitychange', () => {
   term.write(all, () => {
     catchingUp = false;
     keepBottom();
-    r7.log('info', 'catchup', { session: cfg.session, bytes, ms: Math.round(performance.now() - t0) });
+    r7.log('info', 'catchup', { session: cfg.session, bytes, ms: Math.round(performance.now() - t0), waitMs: Math.round(t0 - shown) });
   });
-});
+}
+
+// Frames that block this window's page for 250ms+ (log `frame.long`), at most one
+// line per 2s. The browser reports them itself, so it costs nothing while all is smooth.
+(() => {
+  let last = 0;
+  let skipped = 0;
+  try {
+    new PerformanceObserver((list) => {
+      for (const f of list.getEntries()) {
+        if (f.duration < 250) continue;
+        if (f.startTime - last < 2000) { skipped++; continue; }
+        last = f.startTime;
+        const s = [...(f.scripts || [])].sort((a, b) => b.duration - a.duration)[0];
+        r7.log('warn', 'frame.long', {
+          session: cfg.session, ms: Math.round(f.duration), blockingMs: Math.round(f.blockingDuration || 0),
+          catchingUp, hidden: document.hidden, skipped,
+          ...(s ? { script: `${s.invoker || ''} ${(s.sourceURL || '').split('/').pop()}:${s.sourceCharPosition ?? ''}`.trim(), scriptMs: Math.round(s.duration) } : {}),
+        });
+        skipped = 0;
+      }
+    }).observe({ type: 'long-animation-frame', buffered: false });
+  } catch (e) {
+    r7.log('warn', 'frame.watch_error', { session: cfg.session, error: e.message });
+  }
+})();
 
 function sendJson(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -278,9 +310,103 @@ function setFontSize(size) {
   r7.saveFontSize(cfg.template, size);
 }
 
-// Copied text drops the padding the screen adds: spaces at line ends and trailing blank lines.
+// Copied text drops the padding the screen adds: spaces at line ends and trailing blank
+// lines. Line breaks a program added to wrap a paragraph (r7-Harness wraps replies itself)
+// become spaces, so only real breaks survive a paste.
 function selectedText() {
+  const p = term.getSelectionPosition();
+  // Alt+drag (column selection) copies the block as it looks.
+  if (!p || term._core._selectionService?._activeSelectionMode === 2) return plainSelection();
+  const buf = term.buffer.active;
+  const boxWidth = inputBoxWidth();
+  let out = '';
+  let prev = null;
+  for (let y = p.start.y; y <= p.end.y; y++) {
+    const line = buf.getLine(y);
+    if (!line) continue;
+    const full = line.translateToString(true);
+    const piece = line.translateToString(true, y === p.start.y ? p.start.x : 0, y === p.end.y ? p.end.x : term.cols);
+    if (prev === null) out = piece;
+    else if (line.isWrapped) out += piece;
+    else if (softBreak(prev, full, boxWidth || blockWidth(y - 1))) {
+      // A long path or word cut at the edge joins back without a space.
+      const cut = prev.trimEnd().length >= (boxWidth || term.cols) && /(\S*[\/\\]\S*|\S{20,})$/.test(prev.trimEnd());
+      out = out.replace(/\s+$/, '') + (cut ? '' : ' ') + piece.replace(/^\s+/, '');
+    }
+    else out = out.replace(/[ \t]+$/, '') + '\r\n' + piece;
+    prev = full;
+  }
+  return out.replace(/[ \t]+$/, '').replace(/(\r\n)+$/, '');
+}
+
+function plainSelection() {
   return term.getSelection().split(/\r?\n/).map((line) => line.replace(/\s+$/, '')).join('\r\n').replace(/(\r\n)+$/, '');
+}
+
+const BOX_RE = /^\s*[│╭╰▏├└┌]/;
+
+// The last column with a character on a line, or -1.
+function lastCol(line) {
+  for (let x = line.length - 1; x >= 0; x--) if (line.getCell(x)?.getChars().trim()) return x;
+  return -1;
+}
+
+// r7-Harness's input box on screen: its top and bottom border rows and its first and last
+// column, or null. A box narrower than the window can start past column 0; its text
+// starts 3 columns in, and the bottom border row carries text too.
+function findBox() {
+  const buf = term.buffer.active;
+  if (buf.type !== 'normal' || buf.viewportY !== buf.baseY) return null;
+  let bottom = -1, left = 0, right = 0;
+  for (let r = term.rows - 1; r >= 0; r--) {
+    const line = buf.getLine(buf.viewportY + r);
+    const text = line?.translateToString(true) || '';
+    if (bottom < 0) {
+      const m = /^( *)╰─.*─╯$/.exec(text);
+      if (!m) continue;
+      bottom = r;
+      left = m[1].length;
+      right = lastCol(line);
+    } else if (/^ *╭/.test(text)) return { top: r, bottom, left, right };
+    else if (!/^ *│/.test(text)) return null;
+  }
+  return null;
+}
+
+// r7-Harness wraps its text one column short of its input box's width.
+function inputBoxWidth() {
+  const buf = term.buffer.active;
+  for (let r = term.rows - 1; r >= 0; r--) {
+    const line = buf.getLine(buf.baseY + r);
+    const m = /^( *)╰─.*─╯$/.exec(line?.translateToString(true) || '');
+    if (m) return lastCol(line) - m[1].length;
+  }
+  return 0;
+}
+
+// Other programs: the widest row of the paragraph around a row is about where it wrapped.
+function blockWidth(y) {
+  const buf = term.buffer.active;
+  const plain = (i) => {
+    const line = buf.getLine(i);
+    const text = line?.translateToString(true) || '';
+    return line && text.trim() && !line.isWrapped && !buf.getLine(i + 1)?.isWrapped && !BOX_RE.test(text) ? text : null;
+  };
+  let width = 0;
+  for (let i = y; i >= 0 && plain(i) !== null; i--) width = Math.max(width, plain(i).length);
+  for (let i = y + 1; i < buf.length && plain(i) !== null; i++) width = Math.max(width, plain(i).length);
+  return width;
+}
+
+// A row ended early only because its next word didn't fit: same paragraph, no new item.
+function softBreak(prev, next, width) {
+  const a = prev.replace(/\s+$/, '');
+  const b = next.trim();
+  if (!a.trim() || !b || width < 30) return false;
+  if (BOX_RE.test(prev) || BOX_RE.test(next) || /\S {2,}\S/.test(a.trim()) || /\S {2,}\S/.test(b)) return false;
+  if (/^([-*•◆✓▸○✗✦▶+−>#|`]|\d+[.?):]|[a-z]\))(\s|$)/i.test(b)) return false;
+  if (next.search(/\S/) < prev.search(/\S/)) return false;
+  return a.length >= width * 0.5 && a.length + 1 + b.split(/\s/)[0].length > width;
 }
 
 async function paste() {
@@ -316,7 +442,7 @@ term.attachCustomKeyEventHandler((e) => {
   if (ctrl && e.key === 'Backspace') { sendInput('\x17'); return false; }
   if (ctrl && (k === '=' || k === '+')) { setFontSize(fontPoints + 1); return false; }
   if (ctrl && k === '-') { setFontSize(fontPoints - 1); return false; }
-  if (ctrl && k === '0') { setFontSize(cfg.font.size); return false; }
+  if (ctrl && k === '0') { setFontSize(cfg.font.defaultSize || cfg.font.size); return false; }
   if (ctrl && e.shiftKey && k === 'n') { r7.newWindow(); return false; }
   if (ctrl && e.shiftKey && k === 'w') { r7.closeWindow(); return false; }
   if (ctrl && e.shiftKey && k === 'r') { location.reload(); return false; }
@@ -418,6 +544,19 @@ term.parser.registerOscHandler(111, () => {
 });
 resetColors();
 
+// Selections take the live accent (the cursor color a program sets with its theme), not the
+// template's, so they match whichever theme is on.
+function selectionColor() {
+  return /^#[0-9a-f]{6}$/i.test(colors.cursor) ? colors.cursor : cfg.theme.selectionBackground;
+}
+let shownSelection = '';
+colorListeners.push(() => {
+  const c = selectionColor();
+  if (c === shownSelection) return;
+  shownSelection = c;
+  term.options.theme = { ...term.options.theme, ...seeThroughSelection(c) };
+});
+
 // ---- smooth scrolling -----------------------------------------------------------
 // xterm only scrolls by whole rows. Here the scroll position is in pixels: the
 // grid shows the row under it and is shifted up by the leftover pixels, and one
@@ -434,35 +573,99 @@ const scroll = { pos: 0, target: 0, frame: 0, last: 0, row: -1, pending: null, s
 const rowHeight = () => screenEl.clientHeight / term.rows;
 const cellWidth = () => screenEl.clientWidth / term.cols;
 
-// ---- clicking a picture opens it full size ------------------------------------
+// ---- clicking a picture opens it in the viewer ---------------------------------
 // Reply pictures are page elements with a file path; tool screenshots are drawn by
 // the image addon, so those are saved from its canvas first. A drag still selects.
+// Hovering one shows the hand cursor and a softly breathing outline.
 
 function windowsPath(p) {
   const drive = /^\/mnt\/([a-z])\/(.*)$/i.exec(p);
   return drive ? `${drive[1].toUpperCase()}:\\${drive[2].replace(/\//g, '\\')}` : `\\\\wsl.localhost\\${cfg.distro}${p.replace(/\//g, '\\')}`;
 }
 
+// The picture under a point: its box on the screen element and how to open it.
+function pictureAt(x, y) {
+  const s = screenEl.getBoundingClientRect();
+  for (const img of document.querySelectorAll('.r7-image img')) {
+    const r = img.getBoundingClientRect();
+    if (img.dataset.path && r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      return {
+        box: { left: r.left - s.left, top: r.top - s.top, width: r.width, height: r.height, round: 10 },
+        open: () => {
+          r7.log('info', 'picture.open', { session: cfg.session, path: img.dataset.path });
+          r7.openPath(windowsPath(img.dataset.path));
+        },
+      };
+    }
+  }
+  if (x < s.left || y < s.top) return null;
+  const col = Math.floor((x - s.left) / cellWidth());
+  const row = Math.floor((y - s.top) / rowHeight()) + term.buffer.active.viewportY;
+  const box = drawnPictureBox(col, row);
+  if (!box) return null;
+  return {
+    box,
+    open: () => {
+      const canvas = images.getImageAtBufferCell(col, row);
+      if (!canvas) return;
+      r7.log('info', 'picture.open', { session: cfg.session, drawn: `${canvas.width}x${canvas.height}` });
+      r7.openImage(canvas.toDataURL('image/png'));
+    },
+  };
+}
+
+// A picture the image addon drew, found from the cell's tile without copying the picture.
+function drawnPictureBox(col, row) {
+  const line = term._core.buffer.lines.get(row);
+  if (!line || col >= term.cols || !(line.getBg(col) & 0x10000000)) return null;
+  const tile = line._extendedAttrs?.[col];
+  if (!tile || !(tile.imageId > 0) || tile.tileId < 0) return null;
+  const spec = images._storage?._images?.get(tile.imageId);
+  if (!spec?.actual || !spec.actualCellSize?.width) return null;
+  const perRow = Math.ceil(spec.actual.width / spec.actualCellSize.width);
+  const cw = cellWidth();
+  const rh = rowHeight();
+  return {
+    left: (col - (tile.tileId % perRow)) * cw,
+    top: (row - Math.floor(tile.tileId / perRow) - term.buffer.active.viewportY) * rh,
+    width: spec.actual.width * cw / spec.actualCellSize.width,
+    height: spec.actual.height * rh / spec.actualCellSize.height,
+    round: 2,
+  };
+}
+
+const pictureHover = document.createElement('div');
+pictureHover.id = 'picture-hover';
+screenEl.appendChild(pictureHover);
+const hover = { x: -1, y: -1, frame: 0, key: '' };
+
+function showPictureHover() {
+  hover.frame = 0;
+  const pic = hover.x < 0 || mouseHeld ? null : pictureAt(hover.x, hover.y);
+  document.body.classList.toggle('r7-picture', !!pic);
+  if (!pic) { pictureHover.classList.remove('on'); hover.key = ''; return; }
+  const b = pic.box;
+  const key = `${b.left}|${b.top}|${b.width}|${b.height}`;
+  if (key === hover.key) return;
+  hover.key = key;
+  Object.assign(pictureHover.style, { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px`, borderRadius: `${b.round}px` });
+  pictureHover.classList.add('on');
+}
+function queuePictureHover() {
+  if (!hover.frame) hover.frame = requestAnimationFrame(showPictureHover);
+}
+screenEl.addEventListener('mousemove', (e) => { hover.x = e.clientX; hover.y = e.clientY; queuePictureHover(); });
+screenEl.addEventListener('mouseleave', () => { hover.x = -1; queuePictureHover(); });
+term.onRender(() => { if (hover.x >= 0) queuePictureHover(); });
+
 let pictureDown = null;
 screenEl.addEventListener('mousedown', (e) => { pictureDown = e.button === 0 ? { x: e.clientX, y: e.clientY } : null; }, true);
 screenEl.addEventListener('mouseup', (e) => {
   const down = pictureDown;
   pictureDown = null;
+  queuePictureHover();
   if (!down || e.button !== 0 || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4 || term.hasSelection()) return;
-  for (const img of document.querySelectorAll('.r7-image img')) {
-    const r = img.getBoundingClientRect();
-    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom && img.dataset.path) {
-      r7.log('info', 'picture.open', { session: cfg.session, path: img.dataset.path });
-      return r7.openPath(windowsPath(img.dataset.path));
-    }
-  }
-  const rect = screenEl.getBoundingClientRect();
-  const col = Math.floor((e.clientX - rect.left) / cellWidth());
-  const row = Math.floor((e.clientY - rect.top) / rowHeight()) + term.buffer.active.viewportY;
-  const canvas = images.getImageAtBufferCell(col, row);
-  if (!canvas) return;
-  r7.log('info', 'picture.open', { session: cfg.session, drawn: `${canvas.width}x${canvas.height}` });
-  r7.openImage(canvas.toDataURL('image/png'));
+  pictureAt(e.clientX, e.clientY)?.open();
 }, true);
 
 function scrollBy(px, why = 'wheel') {
@@ -645,7 +848,7 @@ function jumpMessage(dir) {
 // ---- clickable file paths -----------------------------------------------------
 // Windows paths, WSL paths, ~/ and paths relative to the session's folder become
 // links when they exist (checked by the app, cached for a while); a click opens
-// them with their default app, or Explorer for a folder.
+// them with their default app (pictures in the viewer), or Explorer for a folder.
 
 const PATH_RE = /(?:[A-Za-z]:\\[^\s"'`<>|*?]+|(?<![\w/.:~-])(?:~\/|\/)?[\w.@+-]+(?:\/[\w.@+-]+)+\/?)/g;
 const pathCache = new Map();

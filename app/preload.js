@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('r7', {
   writeClipboard: (text) => ipcRenderer.send('clipboard:write', text),
   openExternal: (url) => ipcRenderer.send('open-external', url),
   checkPath: (p, cwd, home) => ipcRenderer.invoke('path:check', p, cwd, home),
+  fileVersion: (p) => ipcRenderer.invoke('file:version', p),
   openPath: (win) => ipcRenderer.send('path:open', win),
   openImage: (dataUrl) => ipcRenderer.send('image:open', dataUrl),
   log: (lvl, ev, data) => ipcRenderer.send('log', lvl, ev, data || {}),

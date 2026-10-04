@@ -2,10 +2,11 @@
 // r7-Shell app: thin window host. Sessions live in the WSL daemon, so this
 // process can quit, crash or update without losing a single terminal.
 
-const { app, BrowserWindow, ipcMain, clipboard, shell, screen, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, clipboard, shell, screen, nativeTheme, nativeImage } = require('electron');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const shared = require('./shared');
 
 const { ROOT, VERSION, STATE, DEFAULTS, settingsFile, readJson, writeJson, token, winToWsl } = shared;
@@ -37,7 +38,11 @@ let quittingKeepSessions = false;
 let saveTimer = null;
 
 function saveBounds(key, win) {
-  if (win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+  // Nothing is saved while the app quits, without monitors, or while monitors come
+  // and go: those moves aren't where you put your windows.
+  if (quittingKeepSessions || noDisplays() || Date.now() < displaysSettleUntil) return;
+  if (win.isDestroyed() || !win.isVisible() || win.isMinimized() || win.isFullScreen()) return;
+  if (!visibleBounds(win.getBounds())) return;
   savedBounds[key] = { ...win.getBounds(), ...(win.physical ? { physical: win.physical } : {}) };
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => writeJson(boundsFile, savedBounds), 400);
@@ -45,6 +50,8 @@ function saveBounds(key, win) {
 
 function visibleBounds(b) {
   if (!b) return null;
+  // With no monitors to check against (see waitForDisplays), a saved spot is trusted.
+  if (noDisplays()) return b;
   const on = screen.getAllDisplays().some((d) => {
     const a = d.workArea;
     return b.x + 80 > a.x && b.x < a.x + a.width - 80 && b.y >= a.y - 10 && b.y < a.y + a.height - 80;
@@ -52,11 +59,71 @@ function visibleBounds(b) {
   return on ? b : null;
 }
 
+// Electron sometimes starts up seeing no monitors at all ("No displays detected" from
+// Chromium), seemingly while nobody is at the PC, and only sees them again at
+// Windows' next display update. Windows opened then all stacked in the middle of a
+// made-up 1920x1080 screen. So startup waits a little for the monitors, a saved spot
+// that can't be checked is still used, nothing is saved without monitors, and when
+// monitors come back each window goes back to its saved spot.
+function noDisplays() { return !screen.getAllDisplays().length; }
+
+function waitForDisplays(ms) {
+  if (!noDisplays()) return Promise.resolve();
+  log('warn', 'displays.none', {});
+  const start = Date.now();
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (noDisplays() && Date.now() - start < ms) return;
+      clearInterval(timer);
+      log('info', 'displays.wait_end', { displays: screen.getAllDisplays().length, ms: Date.now() - start });
+      resolve();
+    }, 500);
+  });
+}
+
+let displaysSettleUntil = 0;
+function displaysChanged() {
+  displaysSettleUntil = Date.now() + 3000;
+  setTimeout(() => {
+    if (noDisplays()) return;
+    let moved = 0;
+    const blind = [];
+    for (const [id, win] of windows) {
+      const b = savedBounds[id];
+      if (win.blind && !win.isDestroyed()) { blind.push(id); continue; }
+      if (win.isDestroyed() || win.isMinimized() || win.isFullScreen() || !visibleBounds(b)) continue;
+      if (b.physical) restorePhysical(win, b.physical); else win.setBounds(b);
+      moved++;
+    }
+    log('info', 'displays.restored', { displays: screen.getAllDisplays().length, windows: moved, reopened: blind.length });
+    reopenBlind(blind);
+  }, 1500);
+}
+
+// A window opened without monitors lays its page out at scale 1 and keeps that once
+// Chromium sees the real 125-150% monitors: the page then draws at 1/scale, everything
+// shrunk ("zoomed out"). So when monitors return those windows are closed and opened
+// again on their saved spots, sessions kept, like an app restart.
+async function reopenBlind(ids) {
+  for (const id of ids) {
+    const win = windows.get(id);
+    if (!win || win.isDestroyed()) continue;
+    let s = null;
+    try { s = await api('GET', `/sessions/${id}`); } catch {}
+    if (!s?.alive) continue;
+    win.keepSession = true;
+    win.destroy();
+    openWindow(s, { activate: false });
+  }
+}
+
 // Bounds in DIPs can't land on every pixel of a monitor scaled 150%: a window tiled at
 // 1280px came back 1281px wide and a pixel or two over the next monitor or window.
 // So each window's exact pixel rect is kept from its WM_MOVE and WM_SIZE messages
 // (frameless: the client area is the whole window), and a reattached window is put
 // back on it with SetWindowPos, one hidden PowerShell for all windows that reopen.
+// It's done twice: landing on a monitor with another scale resizes the window by the
+// scale change a moment later.
 // A pixel-only change can leave the DIP bounds the same, with no move or resize event,
 // so these messages save too.
 function trackPhysical(win, changed) {
@@ -75,7 +142,7 @@ function restorePhysical(win, p) {
     restores = [];
     const calls = list.map((r) => `[void][R.W]::SetWindowPos([IntPtr]${r.hwnd}, [IntPtr]0, ${r.x}, ${r.y}, ${r.width}, ${r.height}, 0x14)`).join('; ');
     const script = "Add-Type -Name W -Namespace R -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int c, uint f); [DllImport(\"user32.dll\")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);'; "
-      + `[void][R.W]::SetThreadDpiAwarenessContext([IntPtr]-4); ${calls}`;
+      + `[void][R.W]::SetThreadDpiAwarenessContext([IntPtr]-4); ${calls}; Start-Sleep -Milliseconds 250; ${calls}`;
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true }, (err) => {
       log(err ? 'warn' : 'info', 'window.restore', { windows: list.length, ...(err ? { error: err.message.slice(0, 200) } : {}) });
     });
@@ -89,7 +156,15 @@ function centeredNew() {
   return { x: a.x + Math.round((a.width - width) / 2), y: a.y + Math.round((a.height - height) / 2), width, height };
 }
 
-function openWindow(session, { activate = true } = {}) {
+// Test windows (`--offscreen`) open past the right edge of every monitor with no
+// taskbar button, so testing never shows anything on screen; their spot is never saved.
+function offscreenBounds() {
+  const right = Math.max(...screen.getAllDisplays().map((d) => d.bounds.x + d.bounds.width));
+  const a = screen.getPrimaryDisplay().workArea;
+  return { x: right + 200, y: a.y, width: settings.newWindowSize.width, height: settings.newWindowSize.height };
+}
+
+function openWindow(session, { activate = true, offscreen = false } = {}) {
   const existing = windows.get(session.id);
   if (existing && !existing.isDestroyed()) {
     if (activate) existing.focus();
@@ -100,9 +175,11 @@ function openWindow(session, { activate = true } = {}) {
   // A session that just started opens at the standard size; one being reattached
   // (app restart, reopen) keeps where its window was. Ids get reused, so age decides.
   const fresh = Date.now() - (Date.parse(session.created || '') || 0) < 15000;
-  const bounds = (!fresh && visibleBounds(savedBounds[session.id])) || centeredNew();
+  const saved = !fresh && !offscreen && visibleBounds(savedBounds[session.id]);
+  const bounds = offscreen ? offscreenBounds() : saved || centeredNew();
+  if (!saved && !fresh && savedBounds[session.id]) log('warn', 'window.offscreen', { id: session.id, saved: savedBounds[session.id], displays: screen.getAllDisplays().map((d) => d.workArea) });
   const win = new BrowserWindow({
-    ...bounds, minWidth: 320, minHeight: 200, show: false, title: session.title, backgroundColor: theme.background || '#000000',
+    ...bounds, minWidth: 320, minHeight: 200, show: false, skipTaskbar: offscreen, title: session.title, backgroundColor: theme.background || '#000000',
     frame: false, thickFrame: false, autoHideMenuBar: true, icon: path.join(ROOT, 'app', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: true },
   });
@@ -118,7 +195,7 @@ function openWindow(session, { activate = true } = {}) {
   // Only save moves made after the window opened: re-applying saved bounds rounds by a
   // pixel or two on scaled monitors, and saving that would make windows creep.
   let opened = false;
-  setTimeout(() => { opened = true; }, 1500);
+  if (!offscreen) setTimeout(() => { opened = true; }, 1500);
   const remember = () => { if (!opened) return; saveBounds(session.id, win); };
   trackPhysical(win, remember);
   win.on('move', remember);
@@ -131,6 +208,7 @@ function openWindow(session, { activate = true } = {}) {
   });
   win.on('unresponsive', () => log('warn', 'renderer.unresponsive', { id: session.id }));
   win.created = Date.parse(session.created || '') || 0;
+  win.blind = noDisplays();
   win.on('closed', () => {
     windows.delete(session.id);
     // Closing a window ends its session, like any terminal, after a short grace so
@@ -145,7 +223,7 @@ function openWindow(session, { activate = true } = {}) {
   for (const fn of windowHooks) {
     try { fn(session.id, win); } catch (e) { log('error', 'extras.window', { id: session.id, error: e.message }); }
   }
-  log('info', 'window.open', { id: session.id, activate });
+  log('info', 'window.open', { id: session.id, activate, place: saved ? 'saved' : fresh ? 'new' : savedBounds[session.id] ? 'offscreen' : 'unknown', physical: !!bounds.physical });
   return win;
 }
 
@@ -230,14 +308,22 @@ async function handleCommand(cmd, a) {
   if (commands.has(cmd)) return commands.get(cmd)(a);
   if (cmd === 'open') {
     const s = await api('GET', `/sessions/${a.session}`);
-    openWindow(s, { activate: !!a.activate });
+    openWindow(s, { activate: !!a.activate && !a.offscreen, offscreen: !!a.offscreen });
     return { opened: s.id };
   }
   if (cmd === 'windows') {
-    return [...windows.entries()].map(([id, w]) => ({ id, bounds: w.getBounds(), visible: w.isVisible(), focused: w.isFocused(), title: w.getTitle() }));
+    // `scaleOk` false means the page is laid out at the wrong scale (see reopenBlind):
+    // its width in CSS pixels times its pixel ratio doesn't fill the window.
+    return Promise.all([...windows.entries()].map(async ([id, w]) => {
+      let page = null;
+      try { page = await w.webContents.executeJavaScript("({ dpr: devicePixelRatio, cssWidth: innerWidth, fontPx: typeof term !== 'undefined' ? term.options.fontSize : null })"); } catch {}
+      const physicalWidth = w.physical?.width ?? (noDisplays() ? null : Math.round(w.getContentBounds().width * screen.getDisplayMatching(w.getBounds()).scaleFactor));
+      const scaleOk = page && physicalWidth ? Math.abs(page.cssWidth * page.dpr - physicalWidth) < 4 : null;
+      return { id, bounds: w.getBounds(), physical: w.physical || null, visible: w.isVisible(), focused: w.isFocused(), title: w.getTitle(), blind: !!w.blind, ...(page ? { dpr: page.dpr, fontPt: page.fontPx && Math.round(page.fontPx * 72 / 96 * 10) / 10 } : {}), scaleOk };
+    }));
   }
   if (cmd === 'shot') {
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const img = await win.webContents.capturePage();
     const file = a.out || path.join(STATE, 'shots', `${a.session}-${Date.now()}.png`);
@@ -247,7 +333,7 @@ async function handleCommand(cmd, a) {
   if (cmd === 'key') {
     // A key press inside this app's own window (no desktop input), for testing
     // the window's own shortcuts. `send` is the way to type into the program.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const modifiers = a.modifiers || [];
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: a.keyCode, modifiers });
@@ -257,20 +343,20 @@ async function handleCommand(cmd, a) {
   }
   if (cmd === 'js') {
     // Runs a line of JavaScript in one window's page, for tests.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     return { result: await win.webContents.executeJavaScript(String(a.code)) };
   }
   if (cmd === 'done') {
     // A program's turn finished: the window flashes until it's focused.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     win.webContents.send('done');
     return { done: a.session };
   }
   if (cmd === 'pin') {
     // `r7shell pin`: one entry of 1-8 images or videos, newest first, or --clear.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const list = a.clear ? [] : [{ id: `pin-${Date.now()}`, media: a.media || [] }, ...(pins.get(a.session) || [])];
     pins.set(a.session, list);
@@ -279,7 +365,7 @@ async function handleCommand(cmd, a) {
   }
   if (cmd === 'attention-test') {
     // Shows a made-up turn state in one window (glow, pins) until the next real update.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const data = { phase: '', completedMs: 0, seen: false, ...a.data };
     if (data.completedMs === 'now') data.completedMs = Date.now();
@@ -289,25 +375,25 @@ async function handleCommand(cmd, a) {
   }
   if (cmd === 'hover') {
     // Moves the pointer inside this app's own window (no desktop input), for testing links.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     win.webContents.sendInputEvent({ type: 'mouseMove', x: a.x, y: a.y });
     return { x: a.x, y: a.y };
   }
   if (cmd === 'click') {
     // A left click inside this app's own window (no desktop input), for testing links.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
-    const at = { x: a.x, y: a.y };
+    const at = { x: a.x, y: a.y, modifiers: a.ctrl ? ['control'] : [] };
     win.webContents.sendInputEvent({ type: 'mouseMove', ...at });
     await new Promise((r) => setTimeout(r, 60));
     win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...at });
     win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...at });
-    return at;
+    return { x: a.x, y: a.y };
   }
   if (cmd === 'drag') {
     // A left-button drag inside this app's own window, for testing selection.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const steps = 8;
     const pause = () => new Promise((r) => setTimeout(r, 25));
@@ -327,7 +413,7 @@ async function handleCommand(cmd, a) {
   if (cmd === 'drag-resize') {
     // Resizes the window's width step by step, like dragging its edge, for testing
     // how the text follows; optional shots at given ms.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const b = win.getBounds();
     const t0 = Date.now();
@@ -352,7 +438,7 @@ async function handleCommand(cmd, a) {
   if (cmd === 'wheel') {
     // Mouse wheel inside this app's own window (no desktop input), for testing
     // scrolling; optional shots at given ms after the first notch.
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     const [w, h] = win.getContentSize();
     const t0 = Date.now();
@@ -375,7 +461,7 @@ async function handleCommand(cmd, a) {
     return screen.getAllDisplays().map((d) => ({ id: d.id, primary: d.id === screen.getPrimaryDisplay().id, scale: d.scaleFactor, bounds: d.bounds, workArea: d.workArea }));
   }
   if (cmd === 'place') {
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (!win) throw new Error(`no window for "${a.session}"`);
     let b = a.bounds;
     if (a.display != null) {
@@ -384,6 +470,9 @@ async function handleCommand(cmd, a) {
       const w = d.workArea;
       b = { x: w.x + Math.round(w.width * 0.1), y: w.y + Math.round(w.height * 0.1), width: Math.round(w.width * 0.8), height: Math.round(w.height * 0.8) };
     }
+    // Moving onto a monitor with a different scale resizes by the scale change, so the
+    // size is set again once the window is there.
+    win.setBounds(b);
     win.setBounds(b);
     return win.getBounds();
   }
@@ -392,7 +481,7 @@ async function handleCommand(cmd, a) {
     return { reloaded: a.session || 'all' };
   }
   if (cmd === 'close') {
-    const win = windows.get(a.session);
+    const win = a.session === 'viewer' && viewer && !viewer.isDestroyed() ? viewer : windows.get(a.session);
     if (win) { win.keepSession = true; win.destroy(); }
     return { closed: !!win };
   }
@@ -415,6 +504,7 @@ async function handleCommand(cmd, a) {
 
 async function quitKeepingSessions() {
   quittingKeepSessions = true;
+  if (saveTimer) { clearTimeout(saveTimer); writeJson(boundsFile, savedBounds); }
   // Windows closed moments ago end now rather than coming back on the next start.
   await Promise.allSettled([...closing.keys()].map((id) => api('DELETE', `/sessions/${id}`)));
   log('info', 'app.quit', { keepSessions: true });
@@ -427,22 +517,80 @@ ipcMain.handle('clipboard:read', () => clipboard.readText());
 ipcMain.on('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
 ipcMain.on('open-external', (_e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
 ipcMain.handle('path:check', (_e, p, cwd, home) => checkPath(p, cwd, home));
-// A picture shown in a window (tool screenshot), saved so the default viewer can open it full size.
-ipcMain.on('image:open', (_e, dataUrl) => {
-  const file = shared.savePicture(dataUrl);
-  if (file) shell.openPath(file).then((err) => { if (err) log('warn', 'image.open', { file, error: err }); });
+// A picture's modified time, added to its file URL so a file written again shows its
+// new contents instead of Chromium's cached copy of the same URL.
+ipcMain.handle('file:version', async (_e, p) => {
+  const win = await checkPath(p, '', '');
+  if (!win) return 0;
+  try { return Math.round((await fs.promises.stat(win)).mtimeMs); } catch { return 0; }
 });
-ipcMain.on('path:open', (_e, win) => { shell.openPath(String(win)).then((err) => { if (err) log('warn', 'path.open', { path: win, error: err }); }); });
+// A picture shown in a window (tool screenshot), saved so the viewer can open it full size.
+ipcMain.on('image:open', (e, dataUrl) => {
+  const file = shared.savePicture(dataUrl);
+  if (file) openViewer(file, BrowserWindow.fromWebContents(e.sender));
+});
+ipcMain.on('path:open', (e, win) => {
+  win = String(win);
+  if (IMAGE_RE.test(win) && fs.existsSync(win)) return openViewer(win, BrowserWindow.fromWebContents(e.sender));
+  shell.openPath(win).then((err) => { if (err) log('warn', 'path.open', { path: win, error: err }); });
+});
 ipcMain.on('log', (e, lvl, ev, data) => log(lvl, ev, { from: 'renderer', ...data }));
 ipcMain.on('set-title', (e, title) => BrowserWindow.fromWebContents(e.sender)?.setTitle(String(title)));
 ipcMain.on('close-window', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
 ipcMain.on('fullscreen', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.setFullScreen(!w.isFullScreen()); });
 ipcMain.on('new-window', (_e, template) => newSession(template).catch((err) => log('error', 'new.error', { error: err.message })));
-ipcMain.on('font-size', (_e, template, size) => { settings.fontSizes = shared.saveFontSize(template, size); });
+// A window laid out at the wrong scale (opened without monitors) looks zoomed out, and
+// zooming it to compensate once saved a size that made every new window huge.
+ipcMain.on('font-size', (e, template, size) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (win?.blind) return log('info', 'font.save_skipped', { template, size, why: 'blind window' });
+  settings.fontSizes = shared.saveFontSize(template, size);
+});
 
 function checkPath(p, cwd, home) {
   return shared.checkPath(p, cwd, home, settings.distro);
 }
+
+// ---- picture viewer ------------------------------------------------------------
+// Pictures open in one small viewer window (app/viewer) instead of Windows Photos:
+// sized to the picture within 90% of the screen the terminal is on, wheel zooms.
+
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i;
+let viewer = null;
+
+function openViewer(file, from) {
+  const display = screen.getDisplayMatching((from && !from.isDestroyed() ? from : BrowserWindow.getFocusedWindow())?.getBounds() || screen.getPrimaryDisplay().bounds);
+  const area = display.workArea;
+  const size = nativeImage.createFromPath(file).getSize();
+  const fit = Math.min(1, (area.width * 0.9) / (size.width || 1200), (area.height * 0.9) / (size.height || 800));
+  const width = Math.round(Math.max(480, (size.width || 1200) * fit));
+  const height = Math.round(Math.max(360, (size.height || 800) * fit));
+  const bounds = { x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2), width, height };
+  // It comes forward when the click came from the focused window (your own click).
+  const activate = !!from && !from.isDestroyed() && from.isFocused();
+  if (!viewer || viewer.isDestroyed()) {
+    viewer = new BrowserWindow({
+      ...bounds, minWidth: 240, minHeight: 160, show: false, frame: false, thickFrame: true, backgroundColor: '#0b0b10',
+      autoHideMenuBar: true, icon: path.join(ROOT, 'app', 'icon.ico'),
+      webPreferences: { preload: path.join(__dirname, 'viewer', 'preload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
+    });
+    viewer.setMenu(null);
+    viewer.webContents.on('will-navigate', (ev) => ev.preventDefault());
+    viewer.once('ready-to-show', () => (activate ? viewer.show() : viewer.showInactive()));
+  } else {
+    if (viewer.isFullScreen()) viewer.setFullScreen(false);
+    if (activate) viewer.focus();
+  }
+  viewer.setBounds(bounds);
+  viewer.file = file;
+  viewer.setTitle(path.basename(file));
+  viewer.loadFile(path.join(__dirname, 'viewer', 'viewer.html'), { query: { src: pathToFileURL(file).href, name: path.basename(file) } });
+  log('info', 'viewer.open', { file, image: `${size.width}x${size.height}`, activate });
+}
+
+ipcMain.on('viewer:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
+ipcMain.on('viewer:fullscreen', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.setFullScreen(!w.isFullScreen()); });
+ipcMain.on('viewer:folder', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w?.file) shell.showItemInFolder(w.file); });
 
 // ---- extras --------------------------------------------------------------------
 // settings.json's `extras` folder can add templates, themes, renderer scripts and a
@@ -508,10 +656,15 @@ if (!app.requestSingleInstanceLock()) {
     }
     connectControl();
     loadExtras();
+    screen.on('display-added', displaysChanged);
+    screen.on('display-removed', displaysChanged);
+    await waitForDisplays(20000);
     const activate = !flag('--inactive');
     const sessions = await api('GET', '/sessions');
     for (const s of sessions) openWindow(s, { activate });
     if (argv.some((x) => x === '--new' || x.startsWith('--new='))) await handleArgs(argv);
     else if (!sessions.length && !argv.includes('--reopen')) await newSession(settings.defaultTemplate, { activate });
+    // `--reopen` with nothing to bring back opens no window, so quit.
+    quitIfEmpty();
   });
 }
