@@ -28,13 +28,15 @@
 
   const ahead = { on: false, text: '', el: null, readyTimer: 0, giveUpTimer: 0 };
 
-  function startTypeAhead(kind = '') {
+  function startTypeAhead(kind = '', band = 0) {
     ahead.on = true;
     ahead.text = '';
+    ahead.band = band;
     ahead.el = document.createElement('div');
     ahead.el.id = 'type-ahead';
+    if (band) ahead.el.style.zIndex = '22';
     screenEl.appendChild(ahead.el);
-    launch.start(kind);
+    launch.start(kind, band);
     glide.hold = true;
     queueCursor();
     editHooks.unshift(typeAhead);
@@ -94,7 +96,7 @@
     el.style.font = `${term.options.fontSize}px ${term.options.fontFamily}`;
     el.style.lineHeight = `${rh}px`;
     el.style.left = `${cw}px`;
-    el.style.top = `${rh}px`;
+    el.style.top = `${(ahead.band || 1) * rh}px`;
     el.style.width = `${(term.cols - 2) * cw}px`;
     el.style.height = `${lines.length * rh}px`;
     const rows = lines.map((line, i) => {
@@ -153,7 +155,8 @@
     ahead.el.remove();
     ahead.el = null;
     const top = readyRow();
-    launch.end(top >= 0 ? top : undefined, ready);
+    if (freeze.el) freeze.release(() => launch.end(readyRow() >= 0 ? readyRow() : undefined, ready));
+    else launch.end(top >= 0 ? top : undefined, ready);
     const text = ahead.text;
     r7.log('info', 'typeahead.done', { session: cfg.session, ready, chars: text.length });
     if (!text) return;
@@ -183,13 +186,80 @@
   });
   term.onWriteParsed(checkReady);
 
-  // The program is about to restart in place (`OSC 7321;refresh`): the launch water covers the
-  // reprint and keys type ahead again until the new one is ready.
+  // ---- refresh ------------------------------------------------------------------
+  // Hold a still during OSC 7321 refresh while the input box accepts type-ahead.
+  const freeze = {
+    el: null, at: 0, emptied: false, refilled: false, unwatch: null, hidden: [], then: null,
+    async hold() {
+      this.at = performance.now();
+      // Hide closing output until the refreshed transcript replaces it.
+      this.emptied = this.refilled = false;
+      const before = new Set((window.r7View?.blocks() || []).map((b) => b.id));
+      this.unwatch = window.r7View?.onChange((list) => {
+        if (!list.length) this.emptied = true;
+        else if (this.emptied) this.refilled = true;
+        else for (const b of list) if (!before.has(b.id) && b.el.style.visibility !== 'hidden') { b.el.style.visibility = 'hidden'; this.hidden.push(b.el); }
+      });
+      const el = this.el = document.createElement('div');
+      el.id = 'refresh-still';
+      el.style.background = colors.bg;
+      const r = screenEl.getBoundingClientRect();
+      const rect = { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+      const shot = await r7.snapshot(rect).catch(() => null);
+      if (this.el !== el) return;
+      if (!shot) { this.drop(); return; }
+      const img = new Image();
+      img.src = shot;
+      await img.decode().catch(() => {});
+      if (this.el !== el) return;
+      el.append(img);
+      screenEl.appendChild(el);
+    },
+    // The chat is back on the page and the box sits at the bottom again: fade out. An empty
+    // chat never refills, so 3s is the most it waits.
+    release(then) {
+      const el = this.el;
+      if (!el) { then(); return; }
+      this.then = then;
+      const since = performance.now();
+      const settled = () => this.refilled && readyRow() >= term.rows - 8;
+      const step = () => {
+        if (this.el !== el) return;
+        if (!settled() && performance.now() - since < 3000) { setTimeout(step, 30); return; }
+        // Two frames for the page to paint its settled layout under the still.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (this.el !== el) return;
+          this.then = null;
+          then();
+          el.classList.add('fade');
+          el.addEventListener('transitionend', () => this.drop(), { once: true });
+          setTimeout(() => this.drop(), 600);
+          r7.log('info', 'refresh.still', { session: cfg.session, heldMs: Math.round(performance.now() - this.at), settled: settled() });
+        }));
+      };
+      step();
+    },
+    // Always ends the water too, so a failed still never leaves it running.
+    drop() {
+      this.el?.remove();
+      this.el = null;
+      this.unwatch?.();
+      this.unwatch = null;
+      for (const el of this.hidden.splice(0)) el.style.visibility = '';
+      const then = this.then;
+      this.then = null;
+      then?.();
+    },
+  };
   term.parser.registerOscHandler(7321, (data) => {
     if (data !== 'refresh') return false;
     if (ahead.on || !launchReady || document.hidden) return true;
     ahead.waitExit = true;
-    startTypeAhead('refresh');
+    // The box's top row (with the task title above it when there is one) is where the water goes.
+    const box = readyRow();
+    const band = box < 0 ? 0 : box > 0 && rowText(term.buffer.active.viewportY + box - 1).trim() ? box - 1 : box;
+    if (band) freeze.hold();
+    startTypeAhead('refresh', band);
     return true;
   });
   term.onResize(() => { if (ahead.on) drawTypeAhead(); });
@@ -242,8 +312,7 @@
 
   const before = (a, b) => a.row < b.row || (a.row === b.row && a.col <= b.col);
   function ordered() { return before(sel.anchor, sel.head) ? [sel.anchor, sel.head] : [sel.head, sel.anchor]; }
-  // Only the text rows: the borders carry a ticking timer and spinner while r7-Harness works,
-  // which used to drop a fresh selection on the next tick after the mouse let go.
+  // Ignore changing timers and spinners when comparing a selection's text.
   const boxRowsText = (box) => { const t = [box.bottom - box.top]; for (let r = box.top + 1; r < box.bottom; r++) t.push(rowText(term.buffer.active.viewportY + r)); return t.join('\n'); };
 
   function hasSelection() { return !!sel.anchor && (sel.anchor.row !== sel.head.row || sel.anchor.col !== sel.head.col); }
@@ -273,6 +342,10 @@
     sel.anchor = sel.head = sel.box = null;
     drawSelection();
   }
+  window.addEventListener('r7-clear', () => {
+    sel.dragging = false;
+    clearSelection();
+  });
 
   function selectedText() {
     const [a, b] = ordered();

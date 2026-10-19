@@ -27,6 +27,7 @@ window.r7shell = {
   done() {
     window.r7shell.attention({ phase: 'waiting', completedMs: Date.now(), seen: false });
     localAttention = true;
+    r7.turnEnd?.();
   },
   setPins(entries, revision) {
     for (const fn of pinListeners) fn(entries || [], revision || '');

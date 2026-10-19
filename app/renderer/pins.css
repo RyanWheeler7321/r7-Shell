@@ -4,6 +4,7 @@
 
 .r7-pins-strip { position: absolute; top: 32px; right: 8px; z-index: 0; pointer-events: auto; background: transparent; }
 .r7-pins-strip[hidden] { display: none; }
+.r7-pins-strip.on-tile { cursor: pointer; }
 .r7-pins-strip * { pointer-events: none; }
 
 .r7-pins-tile {
@@ -18,15 +19,18 @@
   box-shadow: inset 0 0 0 1px rgba(87, 20, 53, .96);
 }
 .r7-pins-tile.hovered::before { box-shadow: inset 0 0 0 2px var(--r7-accent, #ff4fb8); }
+/* Hovered: stays in place and glows (outside the tile, so its own clipping doesn't cut it). */
+.r7-pins-tile.hovered { animation: r7-pin-glow 1600ms ease-in-out infinite; }
+@keyframes r7-pin-glow {
+  0%, 100% { box-shadow: 0 0 8px 1px color-mix(in srgb, var(--r7-accent, #ff4fb8) 45%, transparent); }
+  50% { box-shadow: 0 0 16px 3px color-mix(in srgb, var(--r7-accent, #ff4fb8) 75%, transparent); }
+}
 .r7-pins-tile.video::after {
   content: ''; position: absolute; z-index: 2;
   width: calc(var(--side) * 5 / 6); height: var(--side);
   left: calc(50% - var(--side) / 3); top: calc(50% - var(--side) / 2);
   background: rgba(255, 255, 255, .86); clip-path: polygon(0 0, 0 100%, 100% 50%);
 }
-/* The growing preview stands in for the tile it came from. */
-.r7-pins-tile.covered { visibility: hidden; }
-
 .r7-pins-rail {
   position: absolute; top: 0; right: 0; bottom: 0; width: 20px; opacity: 0;
   transition: opacity 140ms cubic-bezier(.33, 1, .68, 1);

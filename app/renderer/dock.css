@@ -1,0 +1,155 @@
+/* Horizontal/type scale = cell width / 9, vertical = row height / 22. */
+.r7-dock {
+  position: absolute; top: 0; left: 0; overflow: visible !important;
+  pointer-events: none !important; user-select: none; -webkit-user-select: none;
+  white-space: nowrap; color: var(--dk-text); line-height: var(--dk-row);
+  --dk-ease: cubic-bezier(.37, 0, .63, 1);
+}
+.r7-dock [hidden] { display: none !important; }
+.r7-dock .dk-dim { color: var(--dk-dim); }
+.r7-dock .dk-muted { color: var(--dk-muted); }
+.r7-dock .dk-ok { color: var(--dk-ok); }
+.r7-dock .dk-bad { color: var(--dk-fail); }
+.r7-dock .dk-link { color: var(--dk-link); }
+.r7-dock .dk-gold { color: var(--dk-gold); }
+.r7-dock .dk-panel {
+  position: absolute; bottom: 0; left: 0;
+  display: grid; grid-auto-flow: row; align-items: end;
+  column-gap: calc(8px * var(--dk-x)); row-gap: calc(3px * var(--dk-y));
+  overflow: visible; pointer-events: auto;
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,.65));
+}
+.r7-dock .dk-item { display: flex; align-items: flex-end; overflow: hidden; min-width: 0; }
+.r7-dock .dk-card {
+  position: relative; box-sizing: border-box; width: 100%; min-width: 0;
+  padding: calc(6px * var(--dk-y)) calc(12px * var(--dk-x));
+  border: 1px solid var(--dk-line); border-radius: calc(6px * var(--dk-x));
+  background: var(--dk-panel); overflow: hidden; box-shadow: none;
+}
+.r7-dock .dk-card.waiting {
+  border-color: var(--dk-accent);
+  background: color-mix(in srgb, var(--dk-panel), var(--dk-accent) 9%);
+  box-shadow: inset calc(3px * var(--dk-x)) 0 var(--dk-accent);
+}
+.r7-dock .dk-header {
+  display: flex; align-items: center; gap: calc(8px * var(--dk-x));
+  height: calc(24px * var(--dk-y)); min-width: 0; overflow: hidden;
+}
+.r7-dock .dk-mark { flex: none; width: 2ch; color: var(--dk-accent); }
+.r7-dock .dk-mark.dk-ok { color: var(--dk-ok); }
+.r7-dock .dk-mark.dk-bad { color: var(--dk-fail); }
+.r7-dock .dk-mark.dk-gold { color: var(--dk-gold); }
+.r7-dock .dk-name {
+  flex: 0 0 auto; min-width: 2ch; overflow: hidden; text-overflow: ellipsis;
+  color: var(--dk-bright);
+}
+.r7-dock .dk-model { flex: none; margin-left: calc(-8px * var(--dk-x) + 1ch); }
+/* Wide bars: a helper's calls, state and clock sit at the right end. */
+.r7-dock .dk-helper:not(.folded) .dk-model { margin-right: auto; }
+.r7-dock .dk-count, .r7-dock .dk-calls, .r7-dock .dk-clock { flex: none; text-align: right; }
+.r7-dock .dk-clock { min-width: 4ch; }
+.r7-dock .dk-state { flex: none; color: var(--dk-accent); }
+.r7-dock .dk-server:not(.waiting) .dk-state { color: var(--dk-muted); }
+.r7-dock .dk-header > span:empty { display: none; }
+.r7-dock .dk-bar { flex: 1 1 calc(60px * var(--dk-x)); min-width: calc(40px * var(--dk-x)); }
+.r7-dock .tight .dk-calls { display: none; }
+.r7-dock .tiny .dk-model { display: none; }
+.r7-dock .dk-server .dk-name { flex: 1 1 auto; }
+.r7-dock .dk-server .dk-state { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.r7-dock .dk-segs { display: flex; gap: calc(2px * var(--dk-x)); height: calc(14px * var(--dk-y)); }
+.r7-dock .dk-tests { gap: calc(1px * var(--dk-x)); }
+/* Bars match the page's table bars: a solid block over a dotted track. */
+.r7-dock .dk-seg { flex: 1; min-width: 0; position: relative; overflow: hidden; background: repeating-linear-gradient(to right, var(--dk-subtle) 0 2px, transparent 2px 4px); }
+.r7-dock .dk-seg > i, .r7-dock .dk-rail > i {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--dk-accent);
+  transition: width 300ms var(--dk-ease);
+}
+.r7-dock .dk-seg.pass > i { background: var(--dk-ok); }
+.r7-dock .dk-seg.fail > i { background: var(--dk-fail); }
+.r7-dock .dk-seg.cur::after {
+  content: ''; position: absolute; inset: 0; background: var(--dk-accent);
+  opacity: .15; animation: dk-plan-pulse 1.570796s ease-in-out infinite;
+}
+@keyframes dk-plan-pulse { 50% { opacity: .25; } }
+.r7-dock .dk-rail { display: block; position: relative; height: calc(14px * var(--dk-y)); overflow: hidden; background: repeating-linear-gradient(to right, var(--dk-subtle) 0 2px, transparent 2px 4px); }
+.r7-dock .dk-body { min-width: 0; overflow: hidden; }
+.r7-dock .dk-details { min-width: 0; }
+.r7-dock .dk-gen .dk-body { display: flex; align-items: center; gap: calc(10px * var(--dk-x)); }
+.r7-dock .dk-gen .dk-details { flex: 1; }
+.r7-dock .dk-gen .dk-frames { flex: 0 1 auto; max-width: 60%; }
+.r7-dock .dk-slot { position: relative; height: var(--dk-row); min-width: 0; overflow: hidden; }
+.r7-dock .dk-slot-text {
+  display: block; height: var(--dk-row); line-height: var(--dk-row);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.r7-dock .dk-tail { position: relative; overflow: hidden; margin-top: calc(6px * var(--dk-y)); }
+.r7-dock .dk-tail-line {
+  position: absolute; top: 0; left: 0; right: 0;
+  height: var(--dk-row); line-height: var(--dk-row);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.r7-dock .dk-frames { display: flex; align-items: center; gap: calc(5px * var(--dk-x)); overflow: hidden; }
+.r7-dock .dk-frame {
+  position: relative; flex: 0 1 calc(56px * var(--dk-x)); min-width: 0;
+  width: calc(56px * var(--dk-x)); height: calc(32px * var(--dk-y));
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; border: 1px dashed var(--dk-subtle);
+  border-radius: calc(6px * var(--dk-x)); color: var(--dk-dim);
+}
+.r7-dock .compact .dk-frame { flex-basis: calc(46px * var(--dk-x)); width: calc(46px * var(--dk-x)); height: calc(26px * var(--dk-y)); }
+.r7-dock .dk-thumb {
+  position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px);
+  object-fit: contain; background: var(--dk-subtle); border-radius: inherit;
+  animation: dk-thumb-land 400ms var(--dk-ease) both;
+}
+@keyframes dk-thumb-land {
+  from { opacity: 0; transform: scale(.9); box-shadow: 0 0 0 2px var(--dk-accent); }
+  to { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+}
+.r7-dock .dk-minimize {
+  flex: none; width: calc(22px * var(--dk-x)); height: calc(18px * var(--dk-y));
+  box-sizing: border-box; padding: 0; line-height: 1; font: inherit; font-size: calc(13px * var(--dk-x));
+  text-align: center; border: 1px solid var(--dk-subtle); border-radius: calc(3px * var(--dk-x));
+  color: var(--dk-dim); background: transparent; pointer-events: auto; cursor: pointer;
+}
+.r7-dock .dk-minimize:hover { color: var(--dk-text); border-color: var(--dk-muted); }
+.r7-dock .dk-minimize:active { color: var(--dk-bright); border-color: var(--dk-accent); background: var(--dk-accent); }
+.r7-dock .dk-pills {
+  position: absolute; display: flex; justify-content: flex-end; align-items: center;
+  gap: calc(6px * var(--dk-x)); width: max-content; overflow: visible;
+}
+.r7-dock .dk-pill {
+  display: inline-flex; align-items: center; gap: calc(12px * var(--dk-x));
+  box-sizing: border-box; min-width: 0; max-width: 100%; white-space: nowrap;
+  font: inherit; line-height: calc(22px * var(--dk-y)); height: calc(22px * var(--dk-y));
+  padding: 0 calc(12px * var(--dk-x)); border: 1px solid var(--dk-subtle);
+  border-radius: calc(12px * var(--dk-x)); background: var(--dk-panel); color: var(--dk-muted);
+}
+.r7-dock .dk-pill-server { cursor: pointer; pointer-events: auto; }
+.r7-dock .dk-pill-server:hover { border-color: var(--dk-muted); color: var(--dk-bright); }
+.r7-dock .dk-pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.r7-dock .dk-pill > .dk-gold:empty { display: none; }
+.r7-dock.paused *, .r7-dock.paused *::after { animation-play-state: paused !important; }
+.r7-dock .folded { padding-top: calc(2px * var(--dk-y)); padding-bottom: calc(2px * var(--dk-y)); }
+.r7-dock .folded .dk-header > * { display: none; }
+.r7-dock .folded .dk-header > :is(.dk-mark, .dk-name, .dk-model, .dk-bar, .dk-count, .dk-state, .dk-clock):not(:empty) { display: block; }
+/* One line per helper or job: what it's doing now takes the room between its name and its bar. */
+.r7-dock .folded .dk-header > .dk-inline { display: block; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.r7-dock .folded .dk-name { flex: 0 1 auto; }
+.r7-dock .folded .dk-model { margin-right: 0; }
+.r7-dock .folded .dk-bar { flex: 0 0 calc(110px * var(--dk-x)); min-width: 0; }
+.r7-dock .dk-inline { display: none; }
+.r7-dock .folded .dk-header > .dk-minimize:not([hidden]) { display: block; }
+.r7-dock .dk-mark { display: flex !important; align-items: center; justify-content: center; }
+.r7-dock .dk-mark .r7-ring { --tk: calc(var(--dk-row) * .8); }
+.r7-dock .folded .dk-inline { margin-left: 1ch; }
+.r7-dock .slim .dk-bar { display: none; }
+/* A narrow card keeps the helper's name whole; its waiting/running word gives way first. */
+.r7-dock .slim:not(.folded) :is(.dk-state, .dk-count) { display: none; }
+.r7-dock .slim .dk-header { column-gap: calc(4px * var(--dk-x, 1)); }
+.r7-dock .dk-chip {
+  order: -1; align-self: end; display: block; overflow: hidden; text-overflow: ellipsis; line-height: calc(26px * var(--dk-y));
+  box-sizing: border-box; min-width: 0; padding: 0 calc(6px * var(--dk-x));
+  border: 1px dashed var(--dk-muted); border-radius: calc(6px * var(--dk-x));
+  background: var(--dk-panel); color: var(--dk-muted);
+}

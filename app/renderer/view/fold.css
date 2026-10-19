@@ -1,0 +1,55 @@
+/* Folded stretches of work (fold.js): one summary line per finished stretch, click opens it. */
+/* A folded stretch shows only its summary line. The line lives in the first block (f-head); the others hide. */
+#view-column .f-in:not(.f-open):not(.f-head) { display: none !important; }
+#view-column .f-head.f-in:not(.f-open) {
+  margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important;
+  animation: none !important; transform: none !important; opacity: 1 !important; content-visibility: visible;
+}
+#view-column .f-head.f-in:not(.f-open) > :not(.f-line):not(.f-ghost) { display: none !important; }
+/* Fold motion (fold.js play): a still copy of the folded blocks shrinks away under the line,
+   while their pictures fly into the line's thumbnails. */
+#view-column .f-ghost { display: block; overflow: hidden; pointer-events: none; contain: layout paint style; }
+#view-column .f-ghost-inner { transform-origin: 50% 0; }
+#view-column .f-ghost *, #view-column .f-ghost *::before, #view-column .f-ghost *::after { animation: none !important; transition: none !important; }
+#view-column .f-thumb.f-landing img { visibility: hidden; }
+.f-fly { position: fixed; z-index: 30; margin: 0; transform-origin: 0 0; object-fit: cover; border-radius: 3px; pointer-events: none; will-change: transform; }
+/* Small and tight under what came before: no gap above, counts as symbols. */
+#view-column .f-line {
+  --f-thumb-h: 18px;
+  display: inline-flex; align-items: center; flex: none; gap: 0 1ch; max-width: 100%; min-height: 20px; margin: 0 0 6px; padding: 0;
+  color: var(--dim); cursor: pointer; user-select: none; line-height: 18px; font-size: .82em;
+  font-style: normal; font-weight: 400; white-space: normal;
+  border: 0; background: none;
+}
+#view-column .f-line:hover { color: var(--text); }
+#view-column .f-line::after { content: ''; order: 1; flex: none; width: 5ch; height: 1px; background: color-mix(in srgb, var(--accent) 40%, transparent); }
+#view-column .f-line:has(.f-time:empty)::after { display: none; }
+#view-column .f-line:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+#view-column .f-chev { flex: none; width: 1ch; color: var(--accent); }
+#view-column .f-main { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#view-column .f-count { color: var(--muted); margin-right: 1.5ch; }
+#view-column .f-kind { color: var(--muted); margin-right: 1.2ch; font-variant-numeric: tabular-nums; }
+#view-column .f-kind i { font-style: normal; color: var(--dim); margin-right: .35ch; }
+#view-column .f-kind.f-edit, #view-column .f-kind.f-edit i { color: var(--fold-amber, #FF9A3C); }
+#view-column .f-kind.f-risk, #view-column .f-kind.f-risk i { color: var(--warn); }
+#view-column .f-time { order: 2; flex: none; margin-left: 0; color: var(--dim); font-variant-numeric: tabular-nums; }
+#view-column .f-time:empty { display: none; }
+/* Pictures looked at, newest on the left, oldest on the right. */
+/* The summary keeps its room: on a narrow window the oldest pictures (right) drop out whole, the newest stay. */
+#view-column .f-thumbs { flex: 0 1000 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; height: var(--f-thumb-h); overflow: hidden; }
+#view-column .f-thumbs:empty { display: none; }
+#view-column .f-thumb {
+  position: relative; flex: none; height: var(--f-thumb-h); width: calc(var(--f-thumb-h) * var(--f-aspect, 1.7778));
+  border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--bright) 22%, var(--bg));
+}
+#view-column .f-thumb::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bright) 22%, transparent); pointer-events: none; }
+#view-column .f-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; opacity: 0; transition: opacity .15s; image-rendering: auto; -webkit-user-drag: none; }
+#view-column .f-thumb.f-loaded img { opacity: 1; }
+#view-column .f-thumb.f-failed { display: none; }
+#view-column .f-more { flex: none; margin-left: 2px; color: var(--dim); font-size: .87em; }
+/* Fewer things in the column: a little more air around prompts and replies. */
+#view-column .reply { margin-top: 4px; margin-bottom: 14px; }
+#view-column .c-user { margin-top: 18px; }
+@media (prefers-reduced-motion: reduce) { #view-column .f-thumb img { transition: none; } }
+/* A folded stretch sits right under the text before it, with no blank line between. */
+#view-column .reply:has(+ .f-head.f-in:not(.f-open)) { margin-bottom: 2px; }

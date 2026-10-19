@@ -21,7 +21,7 @@ const HELP = `r7shell ${VERSION}: sessions live in the daemon; windows are views
   open <id> [--activate|--offscreen]  open a window (--offscreen: test window past every
                                   monitor, no taskbar button, never focused)
   close <id>                      close its window, keep the session
-  reopen                          bring back the last closed window (within 10 seconds)
+  reopen                          reopen the most recently closed window
   send <id> <text> [--enter]      type into a session (\\n \\r \\t \\e escapes work)
   text <id> [--lines N]           screen text (default: visible screen)
   wait <id> [regex] [--idle MS] [--timeout S]
@@ -31,8 +31,17 @@ const HELP = `r7shell ${VERSION}: sessions live in the daemon; windows are views
                                   focused (id defaults to $R7SHELL_SESSION)
   pin <file>... [--session id]    pin 1-8 images or videos in the window, newest first
   pin --clear [--session id]      remove the window's pins
+  panel [id] --json '<json>'      top panel: {"views":VIEWS.JSON | "image":PATH,"caption":TEXT,
+                                  "watch":{"dirs":[DIR..],"render":[EXE,ARG..],"ignore":[NAME..]},
+                                  "buttons":[{"id","label","argv":[EXE,ARG..],"cwd":DIR,"single",
+                                  "play","argvFrom":[EXE,ARG..]}]}; argvFrom prints argv as JSON
+                                  fields left out keep their value; use argv or argvFrom
+                                  (id defaults to $R7SHELL_SESSION)
+  panel [id] --clear | --press <button> | --render main|all
+                                  remove the panel, press one of its buttons, or run its render
   trace <id> on|off               raw output to logs/trace-<id>.log (debugging)
   shot <id> [--out PATH]          PNG of the window, without focusing it
+  record <id> <ms> <dir> [--scale S]  every frame the window paints, as JPEGs (half size)
   key <id> <Ctrl+V>               press a key inside the window (tests its shortcuts)
   click <id> <x> <y> [--ctrl]     left-click inside the window (tests links)
   drag <id> <x1> <y1> <x2> <y2>   left-drag inside the window (tests selection)
@@ -172,6 +181,11 @@ async function main() {
       return out(await appCmd('open', { session: id, activate, offscreen }));
     }
     case 'close': return out(await appCmd('close', { session: argv.shift() || die('close <id>') }));
+    case 'reopen': {
+      const h = await health();
+      if (!h) die('daemon is not running');
+      return h.app ? out(await appCmd('reopen')) : startApp(['--reopen']);
+    }
     case 'send': {
       const enter = has('--enter');
       const id = argv.shift() || die('send <id> <text>');
@@ -208,6 +222,27 @@ async function main() {
       if (!argv.length || argv.length > 8) die('pin <file>... (1-8 images or videos) [--session id] | pin --clear');
       return out(await appCmd('pin', { session, media: argv.map(pinMedia) }));
     }
+    case 'panel': {
+      const json = opt('--json');
+      const press = opt('--press');
+      const render = opt('--render');
+      const clear = has('--clear');
+      const session = argv.shift() || process.env.R7SHELL_SESSION || die('panel: no session');
+      if (press) return out(await appCmd('panel', { session, press }, 125000));
+      if (clear) return out(await appCmd('panel', { session, clear: true }));
+      if (render) return out(await appCmd('panel', { session, render }));
+      if (!json) die("panel [id] --json '{..}' | --clear | --press <button>");
+      let panel;
+      try { panel = JSON.parse(json); } catch (e) { die(`panel: bad --json: ${e.message}`); }
+      if (!panel || typeof panel !== 'object' || Array.isArray(panel)) die('panel: --json must be an object');
+      // Relative paths resolve here, against the caller's folder; absolute WSL and Windows paths pass through.
+      const local = (p) => (typeof p === 'string' && p && !/^([A-Za-z]:[\\/]|\\\\|\/)/.test(p) ? path.resolve(p) : p);
+      if (panel.image) panel.image = local(panel.image);
+      if (panel.views) panel.views = local(panel.views);
+      if (panel.watch && Array.isArray(panel.watch.dirs)) panel.watch.dirs = panel.watch.dirs.map(local);
+      for (const b of Array.isArray(panel.buttons) ? panel.buttons : []) if (b && b.cwd) b.cwd = local(b.cwd);
+      return out(await appCmd('panel', { session, panel }));
+    }
     case 'attention-test': {
       const id = argv.shift() || die('attention-test <id> <json>');
       return out(await appCmd('attention-test', { session: id, data: JSON.parse(argv.shift() || '{}') }));
@@ -222,6 +257,13 @@ async function main() {
       const id = argv.shift() || die('shot <id>');
       const r = await appCmd('shot', { session: id, out: file ? winPath(path.resolve(file)) : undefined });
       return out(r.wsl);
+    }
+    case 'record': {
+      const scale = opt('--scale');
+      const id = argv.shift() || die('record <id> <ms> <dir>');
+      const ms = Number(argv.shift()) || die('record <id> <ms> <dir>');
+      const dir = argv.shift() || die('record <id> <ms> <dir>');
+      return out(await appCmd('record', { session: id, ms, dir: winPath(path.resolve(dir)), scale: scale ? Number(scale) : undefined }, ms + 5000));
     }
     case 'key': {
       const id = argv.shift() || die('key <id> <Ctrl+Shift+F>');
@@ -274,6 +316,18 @@ async function main() {
       if (sub === 'quit') return out(await appCmd('quit'));
       if (sub === 'reload') return out(await appCmd('reload', { session: argv.shift() }));
       if (sub === 'restart') {
+        // The app hands over to a new copy of itself with its windows up (main.js
+        // restartHandoff); an app from before that quits and starts again.
+        const t0 = Date.now();
+        const r = await appCmd('restart').catch(() => null);
+        if (r?.restarting) {
+          const file = path.join(STATE, 'handoff.json');
+          for (let i = 0; i < 300; i++) {
+            await sleep(100);
+            try { const h = JSON.parse(fs.readFileSync(file, 'utf8')); if (h.pid === r.pid) return out(`restarted in ${Date.now() - t0}ms`); } catch {}
+          }
+          return die('restart: the new app did not take over; see app log');
+        }
         await appCmd('quit').catch(() => {});
         for (let i = 0; i < 40; i++) { await sleep(250); const h = await health(); if (!h.app) break; }
         return startApp(['--inactive']);

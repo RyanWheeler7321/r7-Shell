@@ -1,23 +1,11 @@
 'use strict';
 // ---- Ctrl+P model switch ------------------------------------------------------------
-// r7-Harness sends `OSC 7321;cycle;<json>` instead of printing its model chips above the
-// input box, and `OSC 7321;cycle` alone when they should go. The chips float here over
-// the chat, so the box never moves: the highlight slides to the new model, the input box
-// is wiped over to its new look from left to right, and Luna, Sol, Opus and Astra models
-// each have their own short flourish. The theme's accent tints the highlight a little and
-// colours the wipe and flourish; a program can send per-model colours instead
-// (`OSC 7321;looks;<json>`).
-// r7-Harness answers Ctrl+P about 120-140ms later (it switches the model and its theme
-// first), so the highlight moves on the key press itself, guessing the next chip from
-// the last track, and the answer only corrects it when the guess was wrong.
-// The track also comes at startup without showing it (`OSC 7321;cycle-state;<json>`)
-// and each session's last track is kept across reloads, so even the first press moves at once.
-// Any other key means the pick is done: the chips go at once, and answers to earlier presses
-// only update the track.
+// OSC 7321 cycle shows model chips; cycle-state updates them without showing them.
+// The highlight moves on Ctrl+P and settles when the harness confirms its selection.
+// OSC 7321 looks supplies the model colors and theme previews.
 
 (() => {
-  const WIPE_MS = 220;
-  const HIDE_AFTER_MS = 6000; // r7-Harness hides them at 4s; this only covers a lost message
+  const HIDE_AFTER_MS = 6000; // Hide after a lost dismiss message.
   const GUESS_WAIT_MS = 700; // no answer by then: the key didn't switch models, so put it back
   const ANSWER_MS = 1000; // answers to a press come well within this
   const TRACKS_KEY = 'r7.cycleTracks';
@@ -37,24 +25,25 @@
   const fxCtx = fx.getContext('2d');
 
   let track = null; // { labels, active, colors, folder, models, slots: [{ x, w, el }] }
+  let lastLayout = null;
+  let lastPill = null;
   let hideTimer = 0;
-  let guesses = 0; // Ctrl+P presses moved ahead of r7-Harness's answers
-  let confirmed = -1; // the active chip in r7-Harness's last answer
+  let hideAt = 0;
+  let shown = false;
+  root.hidden = document.hidden;
+  let guesses = 0; // Ctrl+P presses ahead of the harness's answers
+  let confirmed = -1; // the active chip in the last answer
   let guessTimer = 0;
   let pressedAt = -Infinity; // last Ctrl+P or Ctrl+Shift+P
   let dismissedAt = -Infinity; // last key that sent the chips away
   let looks = null;
-  try { looks = JSON.parse(localStorage.getItem('r7.cycleLooks') || 'null'); } catch {}
+  try { looks = JSON.parse(savedValues.getItem('r7.cycleLooks') || 'null'); } catch {}
 
-  // The box as it looked just before Ctrl+P, and a wipe from it to the new look.
-  let wantShot = null; // { top, bottom }
-  let oldBox = null; // { top, bottom, texts, canvas, at }
-  let wipe = null; // { start, top, bottom, canvas, color }
   let effects = []; // { start, ms, draw(ctx, p) }
   let frame = 0;
+  let paintStats = null;
 
-  // A model's family without its version (`claude-opus-5` gives `claude-opus`), so point
-  // releases share one look and one flourish.
+  // Point releases share one model look.
   function modelKey(id) {
     const base = String(id || '').toLowerCase().replace(/:.*$/, '').replace(/^.*\//, '');
     const family = base.split(/[-_\s]+/).filter((t) => t && !/^(?:\d+(?:\.\d+)*|latest)$/.test(t)).join('-');
@@ -63,12 +52,6 @@
 
   const validHex = (c) => /^#[0-9a-f]{6}$/i.test(c || '');
   const rgbOf = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
-  function mix(a, b, t) {
-    if (!validHex(a)) return b;
-    if (!validHex(b)) return a;
-    const x = rgbOf(a), y = rgbOf(b);
-    return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
-  }
   function rgba(c, alpha) {
     const [r, g, b] = validHex(c) ? rgbOf(c) : [255, 255, 255];
     return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
@@ -85,43 +68,27 @@
     return validHex(c) ? c : vivid(pickGlowColor());
   }
 
+  function themeFor(index) {
+    if (!track?.models?.[index]) return null;
+    const variants = looks?.themes?.[modelKey(track.models[index])] || looks?.fallback;
+    return variants?.[window.r7Busy ? 'working' : 'idle'] || null;
+  }
+
+  function confirmTheme() {
+    window.r7ThemeFx?.confirm?.(themeFor(confirmed));
+  }
+
   const easeOut = (p) => 1 - (1 - p) ** 3;
   const easeInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
   const bell = (p) => Math.sin(Math.PI * Math.max(0, Math.min(1, p)));
 
-  function rowText(buf, r) {
-    const line = buf.getLine(buf.viewportY + r);
-    return line ? line.translateToString(true) : '';
-  }
-
-  function boxTexts(box) {
-    const buf = term.buffer.active;
-    const out = [];
-    for (let r = box.top; r <= box.bottom; r++) out.push(rowText(buf, r));
-    return out;
-  }
-
-  // Copy rows of the terminal's own canvases while a render is still on them.
-  function copyRows(top, bottom) {
-    const layers = [...screenEl.querySelectorAll('canvas')].filter((c) => c !== fx && c.id !== 'fade-mask' && c.id !== 'r7-motion' && c.width && c.height);
-    if (!layers.length) return null;
-    const base = layers[0];
-    const src = base.height / term.rows;
-    const out = document.createElement('canvas');
-    out.width = base.width;
-    out.height = Math.round((bottom - top + 1) * src);
-    const c = out.getContext('2d');
-    for (const layer of layers) {
-      const s = layer.height / term.rows;
-      c.drawImage(layer, 0, top * s, layer.width, (bottom - top + 1) * s, 0, 0, out.width, out.height);
-    }
-    return out;
-  }
-
   // ---- the chips ------------------------------------------------------------------
 
   function layout() {
-    if (!track) return;
+    if (document.hidden || !track || !shown) return;
+    if (!track.slots) track.slots = build(track);
+    if (folderEl.textContent !== track.folder) folderEl.textContent = track.folder;
+    folderEl.style.color = colors.palette[8];
     const box = findBox();
     // Over the chat above the box, or under the box while the chat is still too short.
     let chipRow = box ? box.top - 4 : -1;
@@ -131,6 +98,12 @@
     track.left = box.left;
     const cw = cellWidth();
     const ch = rowHeight();
+    const next = [track.slots, chipRow, box.left, box.right, term.cols, cw, ch, term.options.fontSize, term.options.fontFamily];
+    if (lastLayout && next.every((value, i) => value === lastLayout[i])) {
+      placePill(false);
+      return;
+    }
+    lastLayout = next;
     root.style.font = `${term.options.fontSize}px ${term.options.fontFamily}`;
     root.style.top = `${Math.round(chipRow * ch)}px`;
     root.style.height = `${Math.round(2 * ch)}px`;
@@ -150,7 +123,7 @@
   }
 
   function pillRect() {
-    const slot = track?.slots[track.active];
+    const slot = track?.slots?.[track.active];
     if (!slot) return null;
     const cw = cellWidth();
     const ch = rowHeight();
@@ -158,10 +131,15 @@
   }
 
   function placePill(animate) {
+    if (document.hidden || !shown || !track?.slots) return;
     const slot = track.slots[track.active];
-    if (!slot) { pillEl.style.opacity = '0'; return; }
+    if (!slot) { lastPill = null; pillEl.style.opacity = '0'; return; }
     const cw = cellWidth();
-    const color = mix(track.colors[track.active] || colors.fg, accentFor(track.active), 0.18);
+    const accents = track.slots.map((s, i) => accentFor(i));
+    const color = accents[track.active];
+    const next = [track.slots, track.active, cw, ...accents];
+    if (lastPill && next.length === lastPill.length && next.every((value, i) => value === lastPill[i])) return;
+    lastPill = next;
     if (!animate) pillEl.style.transition = 'none';
     pillEl.style.opacity = '1';
     pillEl.style.transform = `translateX(${slot.x * cw}px)`;
@@ -172,7 +150,7 @@
     track.slots.forEach((s, i) => {
       const on = i === track.active;
       s.el.classList.toggle('active', on);
-      s.el.style.color = on ? inkOn(color) : (track.colors[i] || colors.fg);
+      s.el.style.color = on ? inkOn(color) : accents[i];
       // The highlight's pointed ends take the place of the separators beside it.
       if (s.sep) s.sep.classList.toggle('gone', on || i === track.active - 1);
     });
@@ -207,30 +185,30 @@
   function saveTrack() {
     if (!track || !cfg.session) return;
     try {
-      const all = JSON.parse(localStorage.getItem(TRACKS_KEY) || '{}');
+      const all = JSON.parse(savedValues.getItem(TRACKS_KEY) || '{}');
       delete all[cfg.session];
-      all[cfg.session] = { labels: track.labels, active: confirmed, colors: track.colors, models: track.models, folder: folderEl.textContent };
+      all[cfg.session] = { labels: track.labels, active: confirmed, colors: track.colors, models: track.models, folder: track.folder };
       const ids = Object.keys(all);
       for (const id of ids.slice(0, Math.max(0, ids.length - 30))) delete all[id];
-      localStorage.setItem(TRACKS_KEY, JSON.stringify(all));
+      savedValues.setItem(TRACKS_KEY, JSON.stringify(all));
     } catch {}
   }
 
   // Take a track without showing it (startup, or an answer that came after the chips were sent away).
   function quietTrack(data) {
     if (!Array.isArray(data?.labels) || !data.labels.length) return;
-    if (root.classList.contains('on')) return; // the shown track is newer
+    if (shown) return; // the shown track is newer
     const sameRow = track && track.labels.join('\n') === data.labels.join('\n');
     track = {
       labels: data.labels.map(String),
       active: Number.isInteger(data.active) ? data.active : -1,
       colors: (data.colors || []).map((c) => (validHex(c) ? c : '')),
       models: data.models || [],
-      slots: sameRow ? track.slots : build(data),
+      folder: data.folder || '',
+      slots: sameRow ? track.slots : null,
     };
     confirmed = track.active;
-    folderEl.textContent = data.folder || '';
-    folderEl.style.color = colors.palette[8];
+    confirmTheme();
     saveTrack();
   }
 
@@ -243,7 +221,7 @@
       quietTrack(data);
       return;
     }
-    const was = track && root.classList.contains('on') ? track : null;
+    const was = track && shown ? track : null;
     const sameRow = was && was.labels.join('\n') === data.labels.join('\n');
     const from = was ? was.active : -1;
     let active = Number.isInteger(data.active) ? data.active : -1;
@@ -259,13 +237,17 @@
       active,
       colors: (data.colors || []).map((c) => (validHex(c) ? c : '')),
       models: data.models || [],
-      slots: sameRow ? was.slots : build(data),
+      folder: data.folder || '',
+      slots: sameRow ? was.slots : document.hidden ? null : build(data),
       row: was?.row,
       left: was?.left,
     };
-    folderEl.textContent = data.folder || '';
-    folderEl.style.color = colors.palette[8];
+    if (!guesses) confirmTheme();
     saveTrack();
+    shown = true;
+    if (document.hidden) { armHide(); return; }
+    folderEl.textContent = track.folder;
+    folderEl.style.color = colors.palette[8];
     const moved = !was || from !== track.active;
     root.classList.remove('away');
     if (catchingUp) { layout(); root.classList.add('on'); armHide(); return; }
@@ -279,30 +261,37 @@
     } else {
       layout();
     }
-    if (moved) flourish(track.active);
+    if (moved) flourish(track.labels[track.active], accentFor(track.active));
     armHide();
   }
 
-  // Ctrl+P: move to the next chip now, before r7-Harness answers.
+  // Move to the next chip before the harness answers.
   function guessNext() {
     if (!track || track.labels.length < 2 || track.active < 0) return;
-    const shown = root.classList.contains('on');
+    const wasShown = shown;
+    shown = true;
     track.active = (track.active + 1) % track.labels.length;
     guesses++;
-    root.classList.remove('away');
-    if (!shown) {
-      layout();
-      root.classList.remove('on');
-      void root.offsetWidth;
-      root.classList.add('on');
-    } else {
-      placePill(true);
-    }
-    flourish(track.active);
+    const target = track.active, press = pressedAt;
+    const animate = () => {
+      if (document.hidden || !shown || track?.active !== target || pressedAt !== press) return;
+      root.classList.remove('away');
+      if (!wasShown) {
+        layout();
+        root.classList.remove('on');
+        void root.offsetWidth;
+        root.classList.add('on');
+      } else {
+        placePill(true);
+      }
+      flourish(track.labels[track.active], accentFor(track.active));
+    };
+    if (!window.r7ThemeFx?.preview?.(themeFor(target), animate)) animate();
     armHide();
     clearTimeout(guessTimer);
     guessTimer = setTimeout(() => {
       guesses = 0;
+      confirmTheme();
       if (!track || track.active === confirmed) return;
       track.active = confirmed;
       placePill(true);
@@ -311,62 +300,56 @@
 
   function armHide() {
     clearTimeout(hideTimer);
+    hideAt = performance.now() + HIDE_AFTER_MS;
     hideTimer = setTimeout(hide, HIDE_AFTER_MS);
   }
 
   function hide() {
     clearTimeout(hideTimer);
+    clearTimeout(guessTimer);
+    guesses = 0;
+    confirmTheme();
+    if (track) track.active = confirmed;
+    shown = false;
+    hideAt = 0;
     root.classList.remove('on');
+    stopEffects();
   }
 
   // A key after Ctrl+P: the pick is done, so the chips and their effects go at once.
   function dismiss() {
     const pending = performance.now() - pressedAt < ANSWER_MS && dismissedAt < pressedAt;
-    if (!root.classList.contains('on') && !pending && !wipe && !effects.length) return;
+    if (!shown && !pending && !effects.length) return;
     dismissedAt = performance.now();
     clearTimeout(hideTimer);
     clearTimeout(guessTimer);
     guesses = 0;
+    confirmTheme();
     if (track) track.active = confirmed;
+    shown = false;
+    hideAt = 0;
     root.classList.add('away');
     root.classList.remove('on');
-    wipe = null;
-    oldBox = null;
-    wantShot = null;
-    pendingWipeColor = '';
-    effects = [];
-    run();
+    stopEffects();
   }
 
-  // ---- the box wipe and the flourishes ---------------------------------------------
+  // ---- the flourishes -------------------------------------------------------------
 
-  function startWipe(color) {
-    const box = findBox();
-    if (!oldBox || !box || box.top !== oldBox.top || box.bottom !== oldBox.bottom) { oldBox = null; return; }
-    wipe = { start: performance.now(), top: box.top, bottom: box.bottom, canvas: oldBox.canvas, color };
-    oldBox = null;
-    // Drawn now, inside the render that changed the box, so the new look never shows alone first.
-    cancelAnimationFrame(frame);
-    draw();
-  }
-
-  // The chip's name picks the flourish (a role named after its model), or else its model.
-  function flourish(index) {
-    const accent = accentFor(index);
-    const name = String(track.labels[index] || '').replace(/\s*•\s*$/, '').toLowerCase();
-    const family = modelKey(track.models?.[index]).split('-');
-    const make = FLOURISHES[name] || FLOURISHES[Object.keys(FLOURISHES).find((k) => family.includes(k))];
+  function flourish(label, accent) {
+    if (document.hidden) return;
+    const kind = String(label || '').replace(/\s*•\s*$/, '').toLowerCase();
+    const make = FLOURISHES[kind];
     effects = [];
-    pendingWipeColor = accent;
     if (make) effects.push({ start: performance.now(), ...make(accent) });
+    paintStats = { started: performance.now(), frames: 0, cpuMs: 0, maxGapMs: 0, last: 0, firstMs: 0 };
     run();
   }
 
-  // Each model's own touch, in its base colour shifted toward its working colour.
+  // Each model's own touch, in its working colour.
   const FLOURISHES = {
     // A crescent of moonlight crosses the highlight.
     luna: (accent) => {
-      const c = mix('#e4ebff', accent, 0.25);
+      const c = accent;
       return {
         ms: 560,
         draw(ctx, p) {
@@ -393,9 +376,9 @@
         },
       };
     },
-    // A warm flare blooms out of the highlight, rays turning slightly as they fade.
+    // A flare blooms out of the highlight, rays turning slightly as they fade.
     sol: (accent) => {
-      const c = mix('#ffc04d', accent, 0.3);
+      const c = accent;
       return {
         ms: 600,
         draw(ctx, p) {
@@ -431,7 +414,7 @@
     },
     // An ink stroke is brushed under the name, swelling in the middle, then dries away.
     opus: (accent) => {
-      const c = mix('#ff6aa8', accent, 0.55);
+      const c = accent;
       return {
         ms: 640,
         draw(ctx, p) {
@@ -463,7 +446,7 @@
     },
     // Star glints twinkle around the highlight and along the box's top edge.
     astra: (accent) => {
-      const c = mix('#eefcff', accent, 0.45);
+      const c = accent;
       const seed = [0.12, 0.88, 0.35, 0.62, 0.2, 0.74, 0.5];
       return {
         ms: 620,
@@ -503,61 +486,79 @@
     },
   };
 
-  let pendingWipeColor = '';
+  function stopEffects() {
+    cancelAnimationFrame(frame);
+    frame = 0;
+    effects = [];
+    paintStats = null;
+    fxCtx.setTransform(1, 0, 0, 1, 0, 0);
+    fxCtx.clearRect(0, 0, fx.width, fx.height);
+  }
 
   function run() {
-    if (!frame) frame = requestAnimationFrame(draw);
+    if (!document.hidden && !frame) frame = requestAnimationFrame(draw);
   }
 
   function draw() {
     frame = 0;
+    if (document.hidden) { stopEffects(); return; }
     const now = performance.now();
+    effects = effects.filter((e) => now - e.start < e.ms);
+    if (!effects.length) {
+      fxCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fxCtx.clearRect(0, 0, fx.width, fx.height);
+      if (paintStats?.frames) r7.log('info', 'cycle.paint', {
+        session: cfg.session, frames: paintStats.frames,
+        firstMs: Math.round(paintStats.firstMs),
+        maxGapMs: Math.round(paintStats.maxGapMs),
+        cpuMs: Math.round(paintStats.cpuMs * 10) / 10,
+        pixels: fx.width * fx.height,
+      });
+      paintStats = null;
+      return;
+    }
     const dpr = window.devicePixelRatio || 1;
     const w = screenEl.clientWidth;
-    const h = screenEl.clientHeight;
-    if (fx.width !== Math.round(w * dpr) || fx.height !== Math.round(h * dpr)) {
-      fx.width = Math.round(w * dpr);
-      fx.height = Math.round(h * dpr);
-      fx.style.width = `${w}px`;
-      fx.style.height = `${h}px`;
-    }
-    fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    fxCtx.clearRect(0, 0, w, h);
+    const screenH = screenEl.clientHeight;
     const ch = rowHeight();
-    if (wipe) {
-      const p = (now - wipe.start) / WIPE_MS;
-      if (p >= 1) wipe = null;
-      else {
-        // The old box stays right of the edge; a soft line in the working colour runs ahead of it.
-        const edge = easeOut(p) * (w + 40) - 20;
-        const y = wipe.top * ch;
-        const hh = (wipe.bottom - wipe.top + 1) * ch;
-        fxCtx.save();
-        fxCtx.beginPath();
-        fxCtx.rect(edge, y, w - edge, hh);
-        fxCtx.clip();
-        fxCtx.drawImage(wipe.canvas, 0, y, w, hh);
-        fxCtx.restore();
-        // The glow rides the box's top edge only.
-        const a = bell(p * 0.8 + 0.1);
-        const g = fxCtx.createLinearGradient(edge - 40, 0, edge, 0);
-        g.addColorStop(0, rgba(wipe.color, 0));
-        g.addColorStop(1, rgba(wipe.color, 0.2 * a));
-        fxCtx.fillStyle = g;
-        fxCtx.fillRect(edge - 40, y + ch * 0.1, 40, ch * 0.8);
-        fxCtx.fillStyle = rgba(wipe.color, 0.9 * a);
-        fxCtx.fillRect(edge - 1.5, y + ch * 0.1, 1.5, ch * 0.8);
-      }
+    const pill = pillRect();
+    // Sol's radial flare is the largest chip effect; keep its full radius and shadows.
+    // Astra also lights the box edge. Nothing here needs a full-window backing store.
+    const radius = pill ? Math.max(pill.w * 1.55, pill.h * 2) + 32 : 0;
+    const box = findBox();
+    let top = pill ? pill.y + pill.h / 2 - radius : screenH;
+    let bottom = pill ? pill.y + pill.h / 2 + radius : 0;
+    if (box && effects.length) {
+      top = Math.min(top, box.top * ch - ch - 32);
+      bottom = Math.max(bottom, (box.top + 2) * ch + 32);
     }
-    effects = effects.filter((e) => now - e.start < e.ms);
+    const topPx = Math.max(0, Math.floor(top * dpr));
+    const bottomPx = Math.min(Math.round(screenH * dpr), Math.ceil(bottom * dpr));
+    const heightPx = Math.max(1, bottomPx - topPx);
+    if (fx.width !== Math.round(w * dpr) || fx.height !== heightPx) {
+      fx.width = Math.round(w * dpr);
+      fx.height = heightPx;
+      fx.style.width = `${w}px`;
+      fx.style.height = `${heightPx / dpr}px`;
+    }
+    fx.style.top = `${topPx / dpr}px`;
+    fxCtx.setTransform(1, 0, 0, 1, 0, 0);
+    fxCtx.clearRect(0, 0, fx.width, fx.height);
+    fxCtx.setTransform(dpr, 0, 0, dpr, 0, -topPx);
     for (const e of effects) e.draw(fxCtx, (now - e.start) / e.ms);
-    if (wipe || effects.length) run();
+    if (paintStats) {
+      if (!paintStats.frames) paintStats.firstMs = now - paintStats.started;
+      if (paintStats.last) paintStats.maxGapMs = Math.max(paintStats.maxGapMs, now - paintStats.last);
+      paintStats.last = now;
+      paintStats.frames++;
+      paintStats.cpuMs += performance.now() - now;
+    }
+    run();
   }
 
   // ---- wiring ---------------------------------------------------------------------
 
-  // Ctrl+P: redraw the box once now, so its look before the switch can be copied
-  // from the render (the GPU canvas can only be read right after it draws).
+  // The input box stays live even when model illumination is unavailable or disabled.
   document.addEventListener('keydown', (e) => {
     if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
     const ctrlP = e.ctrlKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === 'p';
@@ -567,34 +568,43 @@
       if (!ctrlP) dismiss();
       return;
     }
-    const box = findBox();
-    if (!box) return;
-    wantShot = box;
-    term.refresh(box.top, box.bottom);
     guessNext();
   }, true);
 
   term.onRender(() => {
-    if (wantShot) {
-      const box = wantShot;
-      wantShot = null;
-      const canvas = copyRows(box.top, box.bottom);
-      oldBox = canvas ? { ...box, texts: boxTexts(box), canvas, at: performance.now() } : null;
-      return;
-    }
-    if (oldBox && pendingWipeColor) {
-      if (performance.now() - oldBox.at > 800) { oldBox = null; pendingWipeColor = ''; }
-      else {
-        const box = findBox();
-        if (box && boxTexts(box).join('\n') !== oldBox.texts.join('\n')) {
-          startWipe(pendingWipeColor);
-          pendingWipeColor = '';
-        }
-      }
-    }
+    if (document.hidden) return;
     if (track && root.classList.contains('on')) layout();
   });
-  term.onResize(() => { wipe = null; oldBox = null; if (track) layout(); });
+  term.onResize(() => { stopEffects(); layout(); });
+  window.addEventListener('r7-clear', () => {
+    dismiss();
+    for (const animation of root.getAnimations({ subtree: true })) animation.cancel();
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      root.hidden = true;
+      clearTimeout(guessTimer);
+      guesses = 0;
+      confirmTheme();
+      if (track) track.active = confirmed;
+      stopEffects();
+      return;
+    }
+    if (shown && performance.now() >= hideAt) hide();
+    root.hidden = false;
+    if (!shown) return;
+    layout();
+    root.classList.remove('away');
+    root.classList.add('on');
+    // Resume the current choice, not its entry or highlight transition.
+    for (const animation of root.getAnimations({ subtree: true })) animation.finish();
+  });
+
+  window.addEventListener('r7-busy', () => {
+    if (guesses) window.r7ThemeFx?.preview?.(themeFor(track?.active));
+    else window.r7View?.confirmTheme?.(null);
+  });
 
   term.parser.registerOscHandler(7321, (data) => {
     if (data === 'cycle') { hide(); return true; }
@@ -604,15 +614,15 @@
     try { value = JSON.parse(decodeURIComponent(m[2])); } catch { return true; }
     if (m[1] === 'looks') {
       looks = value;
-      try { localStorage.setItem('r7.cycleLooks', JSON.stringify(value)); } catch {}
+      try { savedValues.setItem('r7.cycleLooks', JSON.stringify(value)); } catch {}
+      if (track) placePill(false);
     } else if (m[1] === 'cycle-state') {
       quietTrack(value);
     } else {
-      if (wantShot) wantShot = null; // the answer came before the box could be copied
       show(value);
     }
     return true;
   });
 
-  try { quietTrack(JSON.parse(localStorage.getItem(TRACKS_KEY) || '{}')[cfg.session]); } catch {}
+  try { quietTrack(JSON.parse(savedValues.getItem(TRACKS_KEY) || '{}')[cfg.session]); } catch {}
 })();

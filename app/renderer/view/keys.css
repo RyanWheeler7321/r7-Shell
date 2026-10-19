@@ -1,0 +1,88 @@
+#view {
+  overscroll-behavior: contain;
+  user-select: text;
+}
+
+#view ::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--bright);
+}
+
+#view::highlight(r7-find),
+#view ::highlight(r7-find) {
+  background-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--bright);
+}
+
+#view::highlight(r7-find-current),
+#view ::highlight(r7-find-current) {
+  background-color: var(--accent);
+  color: var(--bg);
+}
+
+#view-find {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+#view-find[hidden] { display: none; }
+
+#view-find input {
+  width: 210px;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--bright);
+  caret-color: var(--accent);
+  font: inherit;
+  user-select: text;
+}
+
+#view-find input::placeholder { color: var(--muted); }
+#view-find span { color: var(--muted); white-space: nowrap; }
+#view-find button {
+  border: 0;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+#view-find button:hover,
+#view-find button:focus-visible { color: var(--accent); }
+
+#view a,
+#view [data-path] { cursor: text; text-decoration: none; }
+#view a:hover,
+#view [data-path]:hover {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#view [data-question],
+#view img[data-path] { cursor: pointer; }
+#view [data-question]:hover { text-decoration: underline; text-underline-offset: 3px; }
+#view img[data-path] { -webkit-user-drag: none; }
+#view img[data-path]:hover { outline: 1px solid var(--accent); outline-offset: 3px; }
+#view.ctrl-held blockquote { cursor: copy; }
+#view blockquote.view-copied { outline: 1px solid var(--accent); }
+#view blockquote.view-copied::after {
+  content: 'Copied';
+  margin-left: 10px;
+  color: var(--success);
+  font-size: 12px;
+  user-select: none;
+}

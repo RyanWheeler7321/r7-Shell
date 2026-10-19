@@ -25,10 +25,20 @@ const settings = readJson(path.join(STATE, 'settings.json'), {});
 const PORT = Number(argValue('--port', settings.port || 47890));
 const SCROLLBACK = settings.scrollback || 10000;
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
+const VIEW_MAX_BLOCKS = 2000;
+const VIEW_MAX_BYTES = 8 * 1024 * 1024;
+const DEEP_MS = 10 * 60 * 1000;
+const TRACE_MAX_BYTES = 20 * 1024 * 1024;
+let viewDebug = process.env.R7SHELL_VIEW_DEBUG === '1';
+const VIEW_KINDS = new Set(['user', 'think', 'step', 'group', 'done', 'reply', 'compaction', 'notice', 'irc']);
 // Terminal replies (device attributes, cursor reports, mode reports, color and DCS/APC answers).
 const QUERY_REPLY = /^\x1b(\[\??[\d;]*[cRnt]|\[\??[\d;]*\$y|\[\?\d*u|\][\d;]+;[^\x07\x1b]*(\x07|\x1b\\)|P[\s\S]*\x1b\\|_[\s\S]*\x1b\\)$/;
 const SESSIONS_FILE = path.join(STATE, 'sessions.json');
 const log = makeLog(path.join(STATE, 'logs', 'daemon.jsonl'));
+if (viewDebug) setTimeout(() => {
+  viewDebug = false;
+  log('info', 'view.debug_off', { reason: 'ttl' });
+}, DEEP_MS).unref();
 
 const tokenFile = path.join(STATE, 'token');
 let TOKEN = '';
@@ -44,8 +54,10 @@ const appWaiters = new Map();
 const started = Date.now();
 
 function saveSessions() {
+  // An exited program is saved as exited, so a daemon restart never starts it again.
   const list = [...sessions.values()].map((s) => ({
     id: s.id, template: s.template, title: s.title, cwd: s.cwd, cols: s.cols, rows: s.rows, created: s.created,
+    ...(s.pty && !s.alive ? { exited: true } : {}),
   }));
   writeJson(SESSIONS_FILE, list);
 }
@@ -68,7 +80,7 @@ function spawnPty(s) {
   if (command) shellArgs = ['-lic', tpl.keepShell === false ? command : `${command}; exec bash -li`];
   const env = { ...process.env, ...(tpl.env || {}) };
   for (const k of ['WT_SESSION', 'WT_PROFILE_ID', 'TMUX', 'TMUX_PANE']) delete env[k];
-  Object.assign(env, { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'r7shell', TERM_PROGRAM_VERSION: VERSION, R7SHELL_SESSION: s.id, R7SHELL_ROOT: ROOT });
+  Object.assign(env, { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'r7shell', TERM_PROGRAM_VERSION: VERSION, R7SHELL_SESSION: s.id, R7SHELL_ROOT: ROOT, R7SHELL_STATE: STATE });
   const cwd = fs.existsSync(s.cwd) ? s.cwd : process.env.HOME;
   const p = pty.spawn('/bin/bash', shellArgs, { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd, env, encoding: null });
   s.pty = p;
@@ -83,8 +95,10 @@ function spawnPty(s) {
     if (s.pty !== p) return;
     s.alive = false;
     s.exitCode = exitCode;
+    stopTrace(s, 'exit');
     log('info', 'session.exit', { id: s.id, exitCode, signal });
     broadcast(s, { type: 'exit', code: exitCode });
+    saveSessions();
   });
   log('info', 'session.spawn', { id: s.id, template: s.template, pid: s.pid, cwd, cols: s.cols, rows: s.rows });
 }
@@ -102,6 +116,8 @@ function startPty(s) {
 function trackColors(s) {
   s.colors = new Map();
   s.hello = null;
+  s.dock = null;
+  s.chrome = null;
   for (const code of [10, 11, 12, 17]) {
     s.term.parser.registerOscHandler(code, (d) => { if (d !== '?') s.colors.set(String(code), d); return false; });
     s.term.parser.registerOscHandler(code + 100, () => { s.colors.delete(String(code)); return false; });
@@ -117,6 +133,13 @@ function trackColors(s) {
   });
   s.term.parser.registerOscHandler(7321, (d) => {
     if (d === 'hello' || d.startsWith('hello;')) s.hello = d;
+    else if (/^chrome;\d+$/.test(d)) s.chrome = d;
+    // The dock snapshot (`dock;<json>`) is kept with its row, so a reattach can draw it
+    // at once; a bare `dock` means nothing is live any more.
+    else if (d === 'dock' || d.startsWith('dock;')) {
+      s.dock?.marker?.dispose();
+      s.dock = d === 'dock' ? null : { data: d, at: Date.now(), marker: s.term.registerMarker(0) };
+    }
     return false;
   });
 }
@@ -125,7 +148,27 @@ function replayPrefix(s) {
   let out = '';
   for (const [k, v] of s.colors) out += `\x1b]${k};${v}\x07`;
   if (s.hello) out += `\x1b]7321;${s.hello}\x07`;
+  if (s.chrome) out += `\x1b]7321;${s.chrome}\x07`;
   return out;
+}
+
+// The last dock snapshot goes behind the serialized screen, at the row it was printed on
+// (cursor saved and restored around it): ahead of the screen it would land on row 0.
+function dockSuffix(s) {
+  const d = s.dock;
+  if (!d?.marker || d.marker.isDisposed || d.marker.line < 0) return '';
+  const buf = s.term.buffer.active;
+  const row = d.marker.line - buf.baseY;
+  if (buf.type !== 'normal' || row < 0 || row >= s.term.rows) return '';
+  // Age the snapshot's own clock by the time it waited here, or the renderer would read the
+  // wait as clock skew and rewind every timer.
+  let data = d.data;
+  try {
+    const json = d.data.slice(5);
+    const snap = JSON.parse(decodeURIComponent(json));
+    if (Number.isFinite(Number(snap.now))) { snap.now = Number(snap.now) + (Date.now() - d.at); data = `dock;${encodeURIComponent(JSON.stringify(snap))}`; }
+  } catch {}
+  return `\x1b7\x1b[${row + 1};1H\x1b]7321;${data}\x07\x1b8`;
 }
 
 function createSession({ template, cwd, title, cols, rows, id, deferSpawn, deferMs = 3000 }) {
@@ -163,12 +206,44 @@ function createSession({ template, cwd, title, cols, rows, id, deferSpawn, defer
 // Output is batched for a few ms so fast programs make fewer, larger frames,
 // and the pty is paused while the headless copy is behind, so memory stays bounded.
 function onOutput(s, data) {
-  if (s.trace) fs.appendFileSync(s.trace, data);
+  if (s.trace) writeTrace(s, data);
   s.bytesOut += data.length;
   s.lastOutput = Date.now();
   s.batch.push(data);
   if (!s.batchTimer) s.batchTimer = setTimeout(() => flushOutput(s), 4);
   for (const w of s.waiters) w.onOutput(data);
+}
+
+function stopTrace(s, reason, error) {
+  const trace = s.trace;
+  if (!trace) return;
+  clearTimeout(trace.timer);
+  s.trace = null;
+  log(error ? 'error' : 'info', 'trace.off', { id: s.id, status: error ? 'failed' : 'ok', reason,
+    bytes: trace.bytes, dur_ms: Date.now() - trace.at, ...(error ? { error: error.message } : {}) });
+}
+
+function startTrace(s) {
+  stopTrace(s, 'replaced');
+  const file = path.join(STATE, 'logs', `trace-${s.id}.log`);
+  // Each explicit capture replaces the previous bounded capture.
+  fs.writeFileSync(file, '');
+  const trace = { file, bytes: 0, at: Date.now(), timer: null };
+  s.trace = trace;
+  trace.timer = setTimeout(() => stopTrace(s, 'ttl'), DEEP_MS);
+  log('info', 'trace.on', { id: s.id, file: path.basename(file), max_bytes: TRACE_MAX_BYTES, ttl_ms: DEEP_MS });
+}
+
+function writeTrace(s, data) {
+  const trace = s.trace;
+  if (Date.now() - trace.at >= DEEP_MS) return stopTrace(s, 'ttl');
+  try {
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    const part = bytes.subarray(0, TRACE_MAX_BYTES - trace.bytes);
+    fs.appendFileSync(trace.file, part);
+    trace.bytes += part.length;
+    if (trace.bytes >= TRACE_MAX_BYTES) stopTrace(s, 'size');
+  } catch (err) { stopTrace(s, 'write', err); }
 }
 
 function flushOutput(s) {
@@ -209,18 +284,26 @@ function resizeSession(s, cols, rows) {
 }
 
 function killSession(s) {
+  const start = performance.now();
+  try { if (s.alive) s.pty.kill(); }
+  catch (err) {
+    log('error', 'session.kill', { id: s.id, status: 'failed', dur_ms: Math.round(performance.now() - start), error: err.message });
+    throw err;
+  }
   clearTimeout(s.spawnTimer);
   clearTimeout(s.batchTimer);
+  stopTrace(s, 'kill');
   for (const w of s.waiters) w.finish(410, { error: 'session closed' });
-  if (s.alive) { try { s.pty.kill(); } catch {} }
   for (const c of s.clients) c.ws.close(4001, 'session closed');
   s.term.dispose();
   sessions.delete(s.id);
   saveSessions();
-  log('info', 'session.kill', { id: s.id });
+  // The kill signal was sent; session.exit (onExit above) records the process actually ending.
+  log('info', 'session.kill', { id: s.id, status: 'sent', dur_ms: Math.round(performance.now() - start) });
 }
 
 function restartSession(s) {
+  stopTrace(s, 'restart');
   const old = s.pty;
   s.pty = null;
   s.alive = false;
@@ -230,10 +313,15 @@ function restartSession(s) {
   s.term.reset();
   s.colors.clear();
   s.hello = null;
+  s.dock?.marker?.dispose();
+  s.dock = null;
+  s.chrome = null;
+  s.view = null;
   const hadWindows = s.clients.size > 0;
   for (const c of s.clients) c.ws.close(4002, 'restarted, reattach');
   s.clients.clear();
   log('info', 'session.restart', { id: s.id });
+  saveSessions();
   if (hadWindows) s.spawnTimer = setTimeout(() => startPty(s), 3000);
   else spawnPty(s);
 }
@@ -307,6 +395,135 @@ function askApp(cmd, argsObj, timeoutMs = 10000) {
   });
 }
 
+// ---- work page -------------------------------------------------------------
+
+function viewState(s) {
+  return s.view ||= { blocks: new Map(), theme: null, bytes: 0, seq: null, replay: true, enabled: false };
+}
+
+function viewError(s, reason, fields = {}) {
+  viewState(s).replay = true;
+  log('error', 'view.events', { id: s.id, status: 'failed', error: reason, ...fields });
+}
+
+function viewEventError(ev, sid) {
+  if (!ev || ev.v !== 1 || ev.sid !== sid || !Number.isSafeInteger(ev.seq) || ev.seq < 0) return 'invalid event envelope';
+  if (ev.type === 'theme') {
+    if (!ev.roles || typeof ev.roles !== 'object' || Array.isArray(ev.roles) || Object.keys(ev.roles).length > 128) return 'invalid theme roles';
+    return Object.entries(ev.roles).every(([key, value]) => /^[a-zA-Z][\w-]{0,63}$/.test(key) && /^#[\da-f]{6}$/i.test(value)) ? '' : 'invalid theme color';
+  }
+  if (!['reset', 'upsert', 'append', 'seal', 'remove'].includes(ev.op)) return 'invalid event operation';
+  if (ev.op === 'reset') return '';
+  if (typeof ev.id !== 'string' || !ev.id || ev.id.length > 512 || !VIEW_KINDS.has(ev.kind)) return 'invalid block identity';
+  if (!Number.isFinite(ev.at)) return 'invalid event time';
+  if (ev.parent != null && (typeof ev.parent !== 'string' || ev.parent === ev.id)) return 'invalid block parent';
+  if (ev.op === 'append' && (!Number.isSafeInteger(ev.offset) || ev.offset < 0 || typeof ev.chunk !== 'string')) return 'invalid append';
+  return '';
+}
+
+function replayView(s, ws) {
+  if (!s.view?.enabled) return;
+  if (ws.bufferedAmount > SLOW_CLIENT_BYTES) { ws.close(4000, 'slow client, reattach'); return; }
+  const startedAt = performance.now(), v = s.view;
+  const events = [...v.blocks.values()].map((entry) => entry.ev);
+  if (v.theme) events.unshift(v.theme);
+  ws.send(JSON.stringify({ type: 'view', replay: true, seq: v.seq, events }));
+  log('info', 'view.replay', { id: s.id, status: 'ok', blocks: v.blocks.size, bytes: v.bytes, dur_ms: Math.round(performance.now() - startedAt) });
+}
+
+function acceptView(s, events) {
+  const start = performance.now(), v = viewState(s), accepted = [];
+  let dropped = 0;
+  for (const ev of events) {
+    if (ev.op === 'reset') {
+      v.blocks.clear();
+      v.bytes = 0;
+      v.seq = ev.seq;
+      v.replay = false;
+      accepted.push(ev);
+      continue;
+    }
+    if (v.replay) continue;
+    if (ev.seq <= v.seq) continue; // An HTTP retry may repeat an already accepted batch.
+    if (ev.seq !== v.seq + 1) {
+      viewError(s, 'sequence gap', { expected: v.seq + 1, received: ev.seq });
+      continue;
+    }
+    if (ev.type === 'theme') {
+      v.theme = ev;
+      v.seq = ev.seq;
+      accepted.push(ev);
+      continue;
+    }
+    const old = v.blocks.get(ev.id);
+    if (ev.op === 'remove') {
+      v.seq = ev.seq;
+      // Relayed even when the log already evicted it: an attached page may still hold the block.
+      if (old) {
+        v.bytes -= old.bytes;
+        v.blocks.delete(ev.id);
+      }
+      accepted.push(ev);
+      continue;
+    }
+    if (old && old.ev.kind !== ev.kind) {
+      viewError(s, 'block kind changed', { block: ev.id, seq: ev.seq });
+      continue;
+    }
+    if (ev.op !== 'upsert' && !old) {
+      viewError(s, 'missing block', { block: ev.id, seq: ev.seq });
+      continue;
+    }
+    let next = ev.op === 'upsert' ? { ...ev } : { ...old.ev, ...ev };
+    if (ev.op === 'append') {
+      const text = String(old.ev.text ?? old.ev.md ?? '');
+      if (ev.offset > text.length || (ev.offset < text.length && text.slice(ev.offset, ev.offset + ev.chunk.length) !== ev.chunk.slice(0, text.length - ev.offset))) {
+        viewError(s, 'append offset gap or conflict', { block: ev.id, offset: ev.offset, length: text.length });
+        continue;
+      }
+      next.text = text.slice(0, ev.offset) + ev.chunk + text.slice(ev.offset + ev.chunk.length);
+      if (next.kind === 'reply') delete next.md;
+    }
+    next.op = 'upsert';
+    next.sealed = ev.op === 'seal' || (ev.op !== 'upsert' && !!old?.ev.sealed);
+    if (ev.op === 'seal' && typeof ev.md === 'string') next.text = ev.md;
+    delete next.offset;
+    delete next.chunk;
+    const bytes = Buffer.byteLength(JSON.stringify(next));
+    if (bytes > VIEW_MAX_BYTES) {
+      viewError(s, 'block exceeds view log limit', { block: ev.id, bytes });
+      continue;
+    }
+    v.bytes += bytes - (old?.bytes || 0);
+    v.blocks.set(ev.id, { ev: next, bytes });
+    v.seq = ev.seq;
+    accepted.push(ev);
+    if (v.blocks.size > VIEW_MAX_BLOCKS || v.bytes > VIEW_MAX_BYTES) {
+      // Evict one chunk down to 90% so the next events do not evict again.
+      while (v.blocks.size > VIEW_MAX_BLOCKS * 0.9 || v.bytes > VIEW_MAX_BYTES * 0.9) {
+        const id = v.blocks.keys().next().value;
+        v.bytes -= v.blocks.get(id).bytes;
+        v.blocks.delete(id);
+        dropped++;
+      }
+    }
+    if (viewDebug) log('debug', 'view.event', { id: s.id, block: ev.id, seq: ev.seq, op: ev.op, kind: ev.kind, bytes });
+  }
+  // Eviction only trims the log for a later reattach; attached pages keep their own blocks.
+  if (accepted.length) {
+    const text = JSON.stringify({ type: 'view', replay: false, events: accepted });
+    for (const c of s.clients) {
+      if (c.pending) continue; // Its attach replay is captured after the terminal snapshot.
+      if (c.ws.bufferedAmount > SLOW_CLIENT_BYTES) { c.ws.close(4000, 'slow client, reattach'); continue; }
+      c.ws.send(text);
+    }
+  }
+  // Only replays, drops and slow posts are logged.
+  const ms = Math.round(performance.now() - start);
+  if (v.replay || dropped || ms >= 20) log('info', 'view.events', { id: s.id, status: v.replay ? 'replay' : 'ok', events: events.length, accepted: accepted.length, blocks: v.blocks.size, bytes: v.bytes, dropped, dur_ms: ms });
+  return { view: true, accepted: accepted.length, seq: v.seq, replay: v.replay };
+}
+
 // ---- HTTP API --------------------------------------------------------------
 
 function send(res, code, body) {
@@ -316,10 +533,25 @@ function send(res, code, body) {
 }
 
 function readBody(req) {
-  return new Promise((resolve) => {
-    let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 4e6) req.destroy(); });
-    req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); } });
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let bytes = 0, failed = false;
+    req.on('data', (chunk) => {
+      if (failed) return;
+      bytes += chunk.length;
+      if (bytes > 4e6) {
+        failed = true;
+        chunks.length = 0;
+        reject(Object.assign(new Error('request body exceeds 4000000 bytes'), { statusCode: 413 }));
+      } else chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (failed) return;
+      try { resolve(bytes ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); }
+      catch { reject(Object.assign(new Error('invalid JSON'), { statusCode: 400 })); }
+    });
+    req.on('error', reject);
+    req.on('aborted', () => reject(new Error('request aborted')));
   });
 }
 
@@ -351,6 +583,29 @@ async function route(req, res) {
   if (m === 'GET' && url.pathname === '/log') {
     return send(res, 200, { path: path.join(STATE, 'logs', 'daemon.jsonl') });
   }
+  if (m === 'POST' && parts[0] === 'view' && parts[1] && parts.length <= 3) {
+    const s = sessions.get(parts[1]);
+    if (!s) return send(res, 404, { error: `no session "${parts[1]}"` });
+    if (parts[2] && parts[2] !== 'hello') return send(res, 404, { error: 'not found' });
+    const body = await readBody(req);
+    // Any session whose program says hello (only r7-Harness does) gets the page.
+    const allowed = true;
+    if (parts[2] === 'hello') {
+      if (allowed) viewState(s).enabled = true;
+      log('info', 'view.hello', { id: s.id, view: allowed, replay: allowed && viewState(s).replay });
+      return send(res, 200, allowed ? { view: true, replay: viewState(s).replay } : { view: false });
+    }
+    if (!allowed || !s.view?.enabled) return send(res, 409, { view: false, error: 'view handshake required' });
+    if (!Array.isArray(body?.events) || body.events.length > 4096) {
+      viewError(s, 'events must be an array of at most 4096 events');
+      return send(res, 400, { error: 'events must be an array of at most 4096 events', replay: true });
+    }
+    for (const ev of body.events) {
+      const error = viewEventError(ev, s.id);
+      if (error) { viewError(s, error); return send(res, 400, { error, replay: true }); }
+    }
+    return send(res, 200, acceptView(s, body.events));
+  }
   if (parts[0] === 'sessions' && parts[1]) {
     const s = sessions.get(parts[1]);
     if (!s) return send(res, 404, { error: `no session "${parts[1]}"` });
@@ -369,9 +624,9 @@ async function route(req, res) {
       if (action === 'resize') { resizeSession(s, body.cols, body.rows); return send(res, 200, info(s)); }
       if (action === 'restart') { restartSession(s); return send(res, 200, info(s)); }
       if (action === 'trace') {
-        s.trace = body.on ? path.join(STATE, 'logs', `trace-${s.id}.log`) : null;
-        log('info', 'session.trace', { id: s.id, file: s.trace });
-        return send(res, 200, { trace: s.trace });
+        if (body.on) startTrace(s);
+        else stopTrace(s, 'requested');
+        return send(res, 200, { trace: s.trace?.file || null });
       }
     }
   }
@@ -379,7 +634,7 @@ async function route(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  route(req, res).catch((e) => { log('error', 'http.error', { path: req.url.split('?')[0], error: e.message }); send(res, 500, { error: e.message }); });
+  route(req, res).catch((e) => { log('error', 'http.error', { path: req.url.split('?')[0], error: e.message }); if (!res.destroyed && !res.headersSent) send(res, e.statusCode || 500, { error: e.message }); });
 });
 
 // ---- WebSocket: terminal clients and the app control channel ---------------
@@ -432,12 +687,13 @@ function attachClient(ws, params) {
   s.term.write('', () => {
     if (ws.readyState !== ws.OPEN) return;
     // Header as JSON, then the snapshot itself as one binary frame.
-    const snap = Buffer.from(replayPrefix(s) + s.serializer.serialize({ scrollback: SCROLLBACK }), 'utf8');
+    const snap = Buffer.from(replayPrefix(s) + s.serializer.serialize({ scrollback: SCROLLBACK }) + dockSuffix(s), 'utf8');
     ws.send(JSON.stringify({ type: 'snapshot', bytes: snap.length, cols: s.cols, rows: s.rows, title: s.title, alive: s.alive, exitCode: s.exitCode, fresh: !s.seen }));
     s.seen = true;
     ws.send(snap);
     for (const buf of client.pending) ws.send(buf);
     client.pending = null;
+    replayView(s, ws);
     if (!s.pty) startPty(s);
   });
   log('info', 'client.attach', { id: s.id, clients: s.clients.size });
@@ -471,10 +727,17 @@ server.on('error', (e) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  log('info', 'daemon.start', { version: VERSION, pid: process.pid, port: PORT, node: process.version });
+  log('info', 'daemon.start', { version: VERSION, pid: process.pid, port: PORT, node: process.version,
+    ...(viewDebug ? { view_debug_ms: DEEP_MS } : {}) });
   // Saved sessions wait for their windows (the app connects ~10s after a cold boot), so
   // each program starts with its window up and the launch screen covers the real boot.
+  // Drop exited sessions and templates with relaunch disabled.
+  const templates = loadTemplates(STATE);
   for (const saved of readJson(SESSIONS_FILE, [])) {
+    if (saved.exited || templates[saved.template]?.relaunch === false) {
+      log('info', 'session.drop', { id: saved.id, why: saved.exited ? 'exited' : 'no-relaunch' });
+      continue;
+    }
     try { createSession({ ...saved, deferSpawn: true, deferMs: 30000 }); log('info', 'session.relaunch', { id: saved.id }); }
     catch (e) { log('error', 'session.relaunch', { id: saved.id, error: e.message }); }
   }

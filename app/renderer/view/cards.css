@@ -1,0 +1,350 @@
+/* Concept rows: 15px Sometype Mono, 22px rhythm; colours belong to the live theme. */
+#view .view-card {
+  --card-row: 22px;
+  --card-ease: cubic-bezier(.2, .7, .25, 1);
+  box-sizing: border-box;
+  min-width: 0;
+  color: var(--text);
+  font: 15px/22px 'Sometype Mono', monospace;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 22px;
+}
+#view .view-card *, #view .view-card *::before, #view .view-card *::after { box-sizing: border-box; }
+#view .view-card [hidden] { display: none !important; }
+#view .c-content { min-width: 0; min-height: 0; }
+#view .c-line { display: flex; gap: 10px; height: 22px; min-width: 0; white-space: nowrap; overflow: hidden; }
+#view .c-left { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#view .c-right { display: flex; gap: 10px; align-items: baseline; flex: none; max-width: 45%; color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+#view .c-right:empty { display: none; }
+#view .c-right > span { overflow: hidden; text-overflow: ellipsis; }
+#view .c-icon { display: inline-block; width: 1.2em; text-align: center; color: var(--dim); }
+#view .c-dim { color: var(--dim); }
+#view .c-muted { color: var(--muted); }
+#view .c-bright { color: var(--bright); }
+#view .c-accent { color: var(--accent); }
+#view .c-link { color: var(--link); }
+#view .c-gold { color: var(--gold); }
+#view .c-success { color: var(--success); }
+#view .c-warn { color: var(--warn); }
+#view .c-error-text { color: var(--error); }
+#view .c-question { color: var(--question); }
+#view .c-path { cursor: pointer; }
+#view .c-path:hover .c-link { text-decoration: underline; }
+#view .c-arrive { overflow: hidden; animation: cards-arrive .3s var(--card-ease) both; }
+#view .c-arrive > .c-content { overflow: hidden; }
+/* Concept: rows slide in 16px from the left, thinking lifts 8px, the user band only fades. */
+@keyframes cards-arrive { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: translateX(0); } }
+#view .c-think.c-arrive { animation-name: cards-arrive-lift; }
+@keyframes cards-arrive-lift { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+#view .c-user.c-arrive { animation-name: cards-arrive-fade; animation-duration: .4s; }
+@keyframes cards-arrive-fade { from { opacity: 0; } to { opacity: 1; } }
+#view .c-state-change { animation: cards-state .3s var(--card-ease) both; }
+@keyframes cards-state { from { opacity: .45; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+/* Rows that appear inside a live card (search files, hits, pages, folders, completions) grow in. */
+#view .c-new { animation: cards-row-in .3s var(--card-ease) backwards; }
+@keyframes cards-row-in { from { opacity: 0; max-height: 0; transform: translateX(-12px); } to { opacity: 1; max-height: 22px; transform: translateX(0); } }
+
+/* Two stable layers crossfade by six pixels rather than replacing the row. */
+#view .c-step-head { display: grid; min-width: 0; height: 22px; overflow: hidden; }
+#view .c-live-layer, #view .c-done-layer { grid-area: 1 / 1; min-width: 0; }
+#view .c-settling > .c-content > .c-step-head > .c-live-layer,
+#view .c-settling > .c-content > .c-step-head > .c-done-layer { transition: opacity .3s var(--card-ease), transform .3s var(--card-ease), visibility 0s .3s; }
+#view .c-live-layer { opacity: 1; color: var(--bright); transform: translateY(0); }
+#view .c-done-layer { visibility: hidden; opacity: 0; color: var(--dim); transform: translateY(6px); }
+#view .c-done-layer .c-link { opacity: .8; }
+#view .c-settled > .c-content > .c-step-head > .c-live-layer { visibility: hidden; opacity: 0; transform: translateY(-6px); pointer-events: none; user-select: none; }
+#view .c-settled > .c-content > .c-step-head > .c-done-layer { visibility: visible; opacity: 1; transform: translateY(0); transition-delay: 0s; }
+#view .c-pending .c-live-layer { color: var(--dim); opacity: .75; }
+#view .c-child-icon { display: none; }
+#view .c-standalone-icon, #view .c-completion-icon { flex: none; margin-right: 1ch; }
+#view .c-step-head .c-left, #view .c-group-header .c-left { display: flex; align-items: baseline; }
+#view .c-label { position: relative; display: inline-block; min-width: 0; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+/* Running steps use the shared working ring (style.css .r7-ring); it turns only while the step runs. */
+#view .c-spinner { --tk: 1em; margin: 0 .1em; vertical-align: -.18em; color: var(--accent); }
+#view :is(.c-running:not(.c-has-pane) > .c-content > .c-step-head .c-standalone-icon, .c-running > .c-content > .c-group-header .c-group-open-head, .c-running > .c-content > .c-details .c-code-header, .c-members > .c-running:not(.c-has-pane) > .c-content > .c-step-head .c-child-icon) .c-spinner { animation: r7-ring-cw .55s linear infinite; }
+#view :is(.c-running:not(.c-has-pane) > .c-content > .c-step-head .c-standalone-icon, .c-running > .c-content > .c-group-header .c-group-open-head, .c-running > .c-content > .c-details .c-code-header, .c-members > .c-running:not(.c-has-pane) > .c-content > .c-step-head .c-child-icon) .c-spinner::before { animation: r7-ring-ccw .75s cubic-bezier(.45, 0, .55, 1) infinite; }
+#view :is(.c-running:not(.c-has-pane) > .c-content > .c-step-head .c-standalone-icon, .c-running > .c-content > .c-group-header .c-group-open-head, .c-running > .c-content > .c-details .c-code-header, .c-members > .c-running:not(.c-has-pane) > .c-content > .c-step-head .c-child-icon) .c-spinner::after { animation: r7-ring-cw .38s linear infinite; }
+#view .c-members > .c-running > .c-content > .c-step-head .c-standalone-icon :is(.c-spinner, .c-spinner::before, .c-spinner::after) { animation: none; }
+#view .c-dots { flex: none; color: var(--accent); margin-left: 6px; letter-spacing: 2px; }
+#view .c-dot { display: inline-block; opacity: .6; }
+#view .c-edit-cursor, #view .c-writing::after { display: inline-block; flex: none; width: 2px; height: .95em; margin: 0 0 0 4px; background: var(--accent); vertical-align: -.18em; }
+/* The caret spans descender to cap height, level with the letters beside it. */
+#view .c-writing::after { content: ''; }
+#view .c-pip { display: inline-block; flex: none; align-self: center; width: 30px; height: 6px; border-radius: 3px; background: var(--subtle); overflow: hidden; vertical-align: 2px; margin-left: 10px; position: relative; }
+#view .c-pip > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; transition: width .2s var(--card-ease); }
+#view .c-indeterminate > i { opacity: .6; }
+/* Only a running step owns these loops; done and pending siblings stay still. */
+#view .c-step.c-running[data-live-kind='read'] > .c-content > .c-step-head > .c-live-layer .c-label::after { content: ''; position: absolute; top: 0; bottom: 0; left: -20%; width: 70px; pointer-events: none; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bright) 26%, transparent), transparent); animation: cards-scan 1.1s linear infinite; }
+#view .c-step.c-running[data-live-kind='search'] > .c-content > .c-step-head > .c-live-layer .c-label::after { content: ''; position: absolute; top: 0; bottom: 0; left: -20%; width: 36px; pointer-events: none; background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 45%, transparent), transparent); animation: cards-scan .75s linear infinite; }
+@keyframes cards-scan { from { left: -20%; } to { left: 120%; } }
+#view .c-step.c-running > .c-content > .c-step-head > .c-live-layer .c-dot { animation: cards-dot-pulse .625s ease-in-out infinite; }
+#view .c-step.c-running > .c-content > .c-step-head > .c-live-layer .c-dot:nth-child(2) { animation-delay: .1125s; }
+#view .c-step.c-running > .c-content > .c-step-head > .c-live-layer .c-dot:nth-child(3) { animation-delay: .225s; }
+@keyframes cards-dot-pulse { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+#view .c-step.c-running > .c-content > .c-step-head > .c-live-layer .c-edit-cursor,
+#view .c-step.c-running > .c-content > .c-details .c-writing::after { animation: cards-caret .833333s step-end infinite; }
+@keyframes cards-caret { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+#view .c-step.c-running > .c-content > .c-step-head > .c-live-layer .c-indeterminate > i { animation: cards-pip 1.1s ease-in-out infinite; }
+@keyframes cards-pip { 0% { transform: translateX(-100%); } 100% { transform: translateX(286%); } }
+#view .c-settled > .c-content > .c-step-head > .c-live-layer *,
+#view .c-settled > .c-content > .c-step-head > .c-live-layer *::before,
+#view .c-settled > .c-content > .c-step-head > .c-live-layer *::after { animation: none; }
+
+/* Slim user band and newest, wrapping thinking sentence. */
+/* Prompt text is the terminal's userMessageText (default text colour); --bright is the theme's heading colour. */
+#view .c-user { background: var(--user); border-left: 3px solid var(--accent); border-right: 3px solid var(--accent); padding: 4px 14px; margin: 8px 0; color: var(--text); }
+#view .c-user-text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+#view .c-think { color: var(--dim); font-style: italic; white-space: normal; overflow-wrap: anywhere; }
+#view .c-think > .c-content { position: relative; overflow: hidden; }
+/* The working line carries activity while thought text stays still. */
+#view .c-think.c-expanded .c-thought { white-space: pre-wrap; }
+#view .c-compaction { color: var(--dim); margin: 4px 0; }
+#view .c-compaction .c-line::after { content: ''; align-self: center; flex: 1; height: 1px; background: var(--subtle); }
+#view .c-compaction .c-left { flex: 0 1 auto; }
+#view .c-compaction .c-icon, #view .c-notice .c-icon { margin-right: 1ch; }
+#view .c-notice .c-left { white-space: normal; overflow-wrap: anywhere; }
+#view .c-notice .c-line { height: auto; min-height: 22px; }
+#view .c-full { margin: 4px 0 4px 2.2ch; padding: 0 0 0 1ch; border-left: 1px solid var(--subtle); color: var(--muted); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 308px; overflow: hidden auto; overscroll-behavior: contain; }
+/* Long output lines wrap instead of scrolling sideways. */
+#view .reply .reply-title { position: relative; }
+#view .reply .reply-title > .r7-shimmer { top: 0; width: 100%; margin: 0; font: inherit; line-height: inherit; white-space: pre-wrap; user-select: none; color: transparent !important; }
+#view .reply .reply-title > .r7-shimmer * { color: transparent !important; }
+
+/* Sender and recipient stay put while the message travels once. */
+#view .c-irc { margin: 4px 0; }
+#view .c-irc-head { display: flex; align-items: baseline; gap: 1ch; min-width: 0; height: 22px; }
+#view .c-irc-envelope, #view .c-irc-arrow { flex: none; color: var(--accent); }
+#view .c-irc-party { flex: 0 1 auto; max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#view .c-irc-preview { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#view .c-irc-quote { display: block; margin: 2px 0 2px 2.2ch; padding-left: 1ch; border-left: 1px solid var(--subtle); color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 44px; overflow: hidden; }
+#view .c-irc.c-expanded .c-irc-quote { max-height: none; }
+#view .c-irc.c-expanded .c-irc-preview { white-space: pre-wrap; overflow-wrap: anywhere; }
+#view .c-irc.c-expanded .c-irc-head { height: auto; min-height: 22px; }
+#view .c-irc[data-mode='autoreply'] .c-irc-envelope { color: var(--gold); }
+#view .c-irc[data-mode='workpool'] .c-irc-envelope { color: var(--muted); }
+#view .c-irc.c-arrive .c-irc-envelope, #view .c-irc.c-arrive .c-irc-arrow { animation: cards-message .22s var(--card-ease) both; }
+@keyframes cards-message { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
+
+/* Group header, tree rails and one short fold. */
+#view .c-group-header { display: grid; height: 22px; cursor: pointer; outline-offset: 2px; }
+#view .c-group-header:focus-visible { outline: 1px solid var(--accent); }
+#view .c-group-header .c-icon, #view .c-group-header .c-spinner { flex: none; margin-right: 1ch; }
+#view .c-group-header .c-standalone-icon .c-icon { margin-right: 0; }
+#view .c-group-header .c-gold { flex: none; }
+#view .c-group-header .c-left > .c-muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: 1ch; }
+#view .c-group-open-head, #view .c-group-closed-head { grid-area: 1 / 1; min-width: 0; transition: opacity .5s var(--card-ease), transform .5s var(--card-ease), visibility 0s .5s; }
+#view .c-group-closed-head { visibility: hidden; opacity: 0; color: var(--dim); transform: translateY(4px); }
+#view .c-group-pips { color: var(--accent); letter-spacing: 1px; font-size: 14px; }
+#view .c-fold-shell { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .5s var(--card-ease), opacity .4s var(--card-ease); }
+#view .c-fold-inner { min-height: 0; overflow: hidden; }
+#view .c-members { padding-left: 22px; }
+#view .c-members > .c-step { position: relative; padding-left: 2ch; }
+#view .c-members > .c-step::before { content: '├─'; position: absolute; left: 0; top: 0; width: 2ch; color: var(--dim); }
+#view .c-members > .c-step:last-child::before { content: '└─'; }
+#view .c-members > .c-step:not(:last-child)::after { content: ''; position: absolute; top: 22px; bottom: 0; left: .3ch; border-left: 1px solid var(--subtle); }
+#view .c-members .c-standalone-icon { display: none; }
+#view .c-members .c-child-icon { display: inline; flex: none; margin-right: 1ch; }
+#view .c-members .c-live-layer { color: var(--muted); }
+#view .c-members .c-settled > .c-content > .c-step-head > .c-done-layer { opacity: .78; }
+#view .c-folded > .c-content > .c-group-header .c-group-open-head,
+#view .c-auto-fold > .c-content > .c-group-header .c-group-open-head { opacity: 0; visibility: hidden; transform: translateY(-4px); }
+#view .c-folded > .c-content > .c-group-header .c-group-closed-head,
+#view .c-auto-fold > .c-content > .c-group-header .c-group-closed-head { opacity: 1; visibility: visible; transform: translateY(0); transition-delay: 0s; }
+#view .c-folded > .c-content > .c-group-fold { grid-template-rows: 0fr; opacity: 0; visibility: hidden; }
+#view .c-auto-fold > .c-content > .c-group-fold { animation: cards-group-fold .5s var(--card-ease) forwards; }
+@keyframes cards-group-fold { from { grid-template-rows: 1fr; opacity: 1; } to { grid-template-rows: 0fr; opacity: 0; } }
+#view .c-group-pictures > .c-content > .c-group-fold .c-film { display: none; }
+#view .c-group-media:empty { display: none; }
+#view .c-group-failures { display: none; }
+#view .c-folded > .c-content > .c-group-failures { display: block; }
+
+/* Streaming code card, no why footer (22px plus its 1px border removed). */
+#view .c-code-wrap { padding: 6px 0; }
+#view .c-code-folding > .c-content > .c-details > .c-code-wrap { overflow: hidden; animation: cards-code-fold .24s var(--card-ease) forwards; }
+#view .c-code-folded > .c-content > .c-details > .c-code-wrap { display: none; }
+@keyframes cards-code-fold { from { max-height: 444px; padding: 6px 0; opacity: 1; } to { max-height: 0; padding: 0; opacity: 0; } }
+#view .c-code-folding .c-code-wrap *, #view .c-code-folding .c-code-wrap *::after { animation: none !important; transition: none !important; }
+#view .c-code-card { border: 2px solid var(--subtle); border-radius: 0; position: relative; overflow: visible; background: color-mix(in srgb, var(--bg) 95%, var(--accent)); }
+#view .c-corner { position: absolute; width: 11px; height: 11px; border: 0 solid var(--accent); pointer-events: none; }
+#view .c-corner-0 { left: -2px; top: -2px; border-top-width: 2px; border-left-width: 2px; }
+#view .c-corner-1 { right: -2px; top: -2px; border-top-width: 2px; border-right-width: 2px; }
+#view .c-corner-2 { left: -2px; bottom: -2px; border-bottom-width: 2px; border-left-width: 2px; }
+#view .c-corner-3 { right: -2px; bottom: -2px; border-bottom-width: 2px; border-right-width: 2px; }
+#view .c-code-header { display: flex; justify-content: space-between; gap: 12px; padding: 0 10px; height: 22px; background: var(--panel); color: var(--muted); white-space: pre; overflow: hidden; }
+#view .c-code-body { padding: 8px; min-width: 0; }
+#view .c-code-pane { height: 308px; overflow: hidden; position: relative; }
+#view .c-code-row { display: flex; height: 22px; white-space: pre; overflow: hidden; min-width: 0; font-size: 14px; line-height: 22px; }
+#view .c-code-enter { animation: cards-code-line .22s var(--card-ease) both; }
+@keyframes cards-code-line { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: translateX(0); } }
+#view .c-code-enter .c-writing::after { animation-play-state: paused; }
+#view .c-expanded .c-code-pane { overflow: auto; }
+#view .c-code-num { flex: none; width: 4ch; text-align: right; color: var(--dim); padding-right: 1ch; }
+#view .c-code-marker { flex: none; width: 2ch; color: var(--success); }
+#view .c-code-text { flex: 1; min-width: 0; overflow: hidden; }
+#view .c-added { background: color-mix(in srgb, var(--success) 9%, transparent); }
+#view .c-removed { background: color-mix(in srgb, var(--error) 10%, transparent); }
+#view .c-removed .c-code-marker { color: var(--error); }
+#view .c-removed .c-code-text { color: var(--muted); opacity: .85; }
+#view .c-comment { color: var(--dim); font-style: italic; }
+#view .c-band { position: relative; height: 82px; min-width: 0; }
+#view .c-band-labels { position: absolute; top: 0; left: 0; right: 0; height: 22px; font-size: 14px; color: var(--question); overflow: hidden; }
+#view .c-band-labels > span { position: absolute; white-space: nowrap; }
+#view .c-band-bars { position: absolute; top: 22px; height: 44px; left: 0; right: 0; border-bottom: 1px solid var(--subtle); }
+#view .c-code-bar { position: absolute; bottom: 0; background: color-mix(in srgb, var(--accent) 45%, var(--subtle)); }
+#view .c-code-bar.c-lit { background: var(--accent); }
+#view .c-band-shade { position: absolute; top: 22px; height: 44px; background: color-mix(in srgb, var(--bg) 30%, transparent); transition: left .2s var(--card-ease), width .2s var(--card-ease); }
+#view .c-band-lens { position: absolute; top: 22px; height: 44px; min-width: 4px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 4.5%, transparent); transition: left .2s var(--card-ease), width .2s var(--card-ease); }
+#view .c-band-fan { position: absolute; top: 66px; height: 16px; left: 0; right: 0; background: color-mix(in srgb, var(--accent) 4.5%, transparent); transition: clip-path .2s var(--card-ease); }
+#view .c-running.c-has-pane > .c-content > .c-step-head { display: none; }
+
+/* Search result counts, rails, matched spans and partial-file read map. */
+#view .c-excerpt-folding > .c-content > .c-details > .c-excerpt-fold { animation: cards-excerpt-fold .5s var(--card-ease) forwards; }
+#view .c-excerpt-folded > .c-content > .c-details > .c-excerpt-fold { display: none; }
+@keyframes cards-excerpt-fold { from { grid-template-rows: 1fr; opacity: 1; } to { grid-template-rows: 0fr; opacity: 0; } }
+#view .c-search, #view .c-web { padding-left: 24px; }
+#view .c-tree { display: inline-block; width: 3ch; color: var(--dim); }
+#view .c-search-path { display: inline-block; width: 330px; max-width: 52%; overflow: hidden; vertical-align: top; }
+#view .c-hit-count { display: inline-block; width: 28px; text-align: right; color: var(--text); margin-right: 12px; vertical-align: top; }
+#view .c-hit-bar { display: inline-block; width: 10ch; height: 13px; vertical-align: -1px; }
+#view .c-hit-bar > i { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: width .2s var(--card-ease); }
+#view .c-new .c-hit-bar > i, #view .c-new .c-folder-bar > i { animation: cards-bar-grow .3s var(--card-ease) backwards; }
+@keyframes cards-bar-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+#view .c-hit-rail { width: 6ch; }
+#view .c-hit-num { display: inline-block; width: 42px; text-align: right; color: var(--dim); margin-right: 12px; }
+#view .c-preview { color: var(--muted); white-space: pre; }
+#view .c-hit { background: color-mix(in srgb, var(--accent) 40%, var(--bg)); color: var(--bright); font-weight: 700; border-radius: 2px; padding: 0 1px; }
+#view .c-map { position: relative; height: 66px; margin-left: 52px; width: min(756px, calc(100% - 52px)); }
+#view .c-map-label { position: absolute; top: 0; height: 22px; left: 0; right: 0; color: var(--accent); white-space: nowrap; overflow: hidden; }
+#view .c-map-bars { position: absolute; top: 22px; left: 0; right: 0; height: 22px; display: flex; align-items: center; gap: 1px; overflow: hidden; }
+#view .c-map-bars i { flex: 1; min-width: 0; background: var(--subtle); border-radius: 1px; }
+#view .c-map-bars i.c-lit { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+#view .c-map-lens { position: absolute; top: 20px; height: 26px; border: 1px solid var(--accent); border-radius: 3px; transition: left .2s var(--card-ease), width .2s var(--card-ease); }
+#view .c-map-ticks { position: absolute; top: 46px; left: 0; right: 0; display: flex; justify-content: space-between; color: var(--dim); font-size: 13px; }
+#view .c-site-chip { display: inline-block; width: 17px; height: 15px; line-height: 15px; font-size: 11px; text-align: center; border-radius: 3px; background: var(--subtle); color: var(--gold); vertical-align: 1px; margin: 0 1ch 0 0; }
+#view .c-site-chip.c-open { background: var(--accent); color: var(--bright); }
+#view .c-web-result { color: var(--dim); text-decoration: none; }
+#view .c-web-result.c-open { color: var(--text); }
+#view .c-web-result:hover { text-decoration: underline; }
+#view .c-found { color: var(--muted); font-style: italic; }
+#view .c-download { display: inline-block; width: 10ch; height: 10px; background: var(--subtle); }
+#view .c-download > i { display: block; height: 100%; background: var(--accent); transition: width .2s var(--card-ease); }
+
+/* Test failures stay legible with their original expected/received values. */
+#view .c-failure { margin: 2px 0; padding: 0 8px; border-left: 2px solid var(--error); border-radius: 2px; background: color-mix(in srgb, var(--error) 7%, transparent); }
+#view .c-failure .c-icon { margin-right: 1ch; }
+#view .c-fail-rail { display: inline-block; padding-left: 22px; width: 5ch; color: var(--dim); }
+#view .c-failure .c-line { height: auto; min-height: 22px; }
+#view .c-failure .c-left { white-space: pre-wrap; overflow-wrap: anywhere; }
+#view .c-failure .c-right { margin-left: auto; align-self: baseline; font-size: 13px; }
+#view .c-failure .c-right .c-link { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Theme-proof picture frame, checkerboard only behind actual transparency. */
+#view .c-film { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 12px 8px; margin-left: 12px; border-left: 1px solid var(--subtle); overflow: hidden; }
+#view .c-film-strip { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 0 1 auto; overflow: visible; }
+/* Width comes from the height and the picture's shape, and the height follows when the strip runs
+   out of room, so a wide picture shrinks whole instead of sitting in a letterboxed frame. */
+#view .c-picture { --pic-h: 104px; position: relative; flex: 0 1 auto; min-width: 12px; width: calc(var(--pic-h) * var(--picture-aspect, 1.777778)); max-width: 100%; height: auto; aspect-ratio: var(--picture-aspect, 1.777778); border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 6px; opacity: 1; cursor: pointer; background-color: color-mix(in srgb, var(--bright) 60%, var(--bg)); background-image: linear-gradient(45deg, color-mix(in srgb, var(--bright) 44%, var(--bg)) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--bright) 44%, var(--bg)) 75%), linear-gradient(45deg, color-mix(in srgb, var(--bright) 44%, var(--bg)) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--bright) 44%, var(--bg)) 75%); background-size: 10px 10px; background-position: 0 0, 5px 5px; transition: width .24s var(--card-ease); }
+#view .c-picture::after { content: ''; position: absolute; inset: 0; border-radius: 5px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bright) 16%, transparent); pointer-events: none; }
+#view .c-picture:not(.c-loaded):not(.c-image-failed) { border-style: dashed; }
+#view .c-picture:not(.c-loaded):not(.c-image-failed)::before { content: '▧'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); }
+#view .c-picture.c-active { --pic-h: 148px; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 90%, transparent); }
+#view .c-picture:hover { border-color: var(--bright); }
+#view .c-picture-clip { position: absolute; inset: 0; overflow: hidden; border-radius: 5px; }
+#view .c-picture img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; border-radius: inherit; cursor: pointer; image-rendering: auto; -webkit-user-drag: none; }
+/* Shown at 2x or more of its natural size (cards.js crisp): hard pixels instead of a blur. */
+#view img[data-crisp='pixels'] { image-rendering: pixelated; }
+#view .c-picture:not(.c-loaded) img { opacity: 0; }
+#view .c-picture.c-picture-enter:not(.c-picture-instant):not(.c-picture-arrived) { animation: cards-picture .35s var(--card-ease) both; }
+@keyframes cards-picture { from { opacity: 0; transform: translateX(-14px) scale(.92); } to { opacity: 1; transform: translateX(0) scale(1); } }
+/* A pink ring expands off a new picture once, then goes. */
+#view .c-picture-ring { display: none; position: absolute; inset: -3px; border: 2px solid var(--accent); border-radius: 8px; pointer-events: none; z-index: 3; }
+#view .c-picture-enter:not(.c-picture-instant) .c-picture-ring:not(.c-ring-done) { display: block; animation: cards-ring .8s .1s var(--card-ease) both; }
+@keyframes cards-ring { from { inset: -3px; border-radius: 8px; opacity: .85; } to { inset: -9px; border-radius: 14px; opacity: 0; } }
+#view .c-picture-error { display: none; position: absolute; inset: 0; place-items: center; pointer-events: none; font-size: 12px; color: var(--error); background: var(--bg); }
+#view .c-image-failed .c-picture-error { display: grid; }
+#view .c-readout { flex: 1 1 180px; max-width: 400px; min-width: 0; height: 44px; overflow: hidden; }
+#view .c-readout > span, #view .c-picture-name { display: block; max-width: 100%; height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#view .c-picture-name { appearance: none; border: 0; padding: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+#view .c-picture-name:hover { color: var(--link); text-decoration: underline; }
+#view .c-picture-name:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+#view .c-readout .c-dim { font-size: 13px; line-height: 20px; }
+#view .c-crop { position: absolute; pointer-events: none; border: 1.5px solid var(--bright); transform-origin: left top; box-shadow: 0 0 0 999px color-mix(in srgb, var(--bg) 55%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--bg) 45%, transparent); }
+/* A crop draws in: the frame starts around the whole picture and closes onto the region while the
+   rest dims, then the corner handles pop (the keyframes end on the box's own inline spot). */
+#view .c-crop-enter:not(.c-crop-drawn) { animation: cards-crop .55s .12s cubic-bezier(.5,0,.15,1) both; }
+@keyframes cards-crop {
+  from { left: 0; top: 0; width: 100%; height: 100%; box-shadow: 0 0 0 999px transparent, inset 0 0 0 1px transparent; border-color: color-mix(in srgb, var(--bright) 35%, transparent); }
+}
+#view .c-crop-enter .c-handle { animation: cards-handle .22s .62s var(--card-ease) backwards; }
+@keyframes cards-handle { from { opacity: 0; } to { opacity: 1; } }
+#view .c-handle { position: absolute; width: 6px; height: 6px; background: var(--bright); border: 1px solid color-mix(in srgb, var(--bg) 65%, transparent); }
+#view .c-handle-0 { left: -4px; top: -4px; }
+#view .c-handle-1 { right: -4px; top: -4px; }
+#view .c-handle-2 { left: -4px; bottom: -4px; }
+#view .c-handle-3 { right: -4px; bottom: -4px; }
+#view .c-pair { border-left: 0; padding: 10px 0; margin-left: 52px; gap: 12px; }
+#view .c-pair .c-film-strip { gap: 12px; }
+#view .c-pair .c-picture { --pic-h: 108px; opacity: 1; }
+#view .c-pair-arrow { color: var(--accent); font-size: 17px; width: 16px; text-align: center; flex: none; }
+#view .c-pair .c-readout { max-width: 300px; }
+#view .c-badge { display: inline-block; width: 18px; height: 18px; line-height: 18px; margin-right: 6px; border-radius: 4px; text-align: center; font-size: 12px; font-weight: 800; color: var(--bg); vertical-align: 1px; background: var(--gold); }
+#view .c-badge[data-app='Blender'] { background: var(--question); }
+#view .c-badge[data-app='Unity'] { background: var(--bright); }
+#view .c-badge[data-app='Resolve'] { background: var(--warn); }
+#view .c-badge[data-app='Ableton'] { background: var(--success); }
+#view .c-done-layer .c-badge { opacity: .85; }
+
+/* Risk tint and exact target remain after the folder list folds. */
+#view .c-risk { border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 7%, transparent); margin: 2px 0; padding-left: 7px; }
+#view .c-risk .c-done-layer { color: var(--text); }
+#view .c-risk .c-spinner { color: var(--warn); }
+#view .c-risk .c-standalone-icon { margin-right: 0; }
+#view .c-risk-tag { display: inline-block; flex: none; align-self: center; width: 5.6ch; text-align: center; margin-right: 8px; border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); border-radius: 3px; font-size: 12px; line-height: 15px; height: 17px; vertical-align: 1px; letter-spacing: .5px; }
+#view .c-risk-fold { padding-left: 4.4ch; }
+#view .c-risk-rail { display: inline-block; width: 9ch; color: var(--dim); }
+#view .c-folder-name { display: inline-block; width: 24ch; }
+#view .c-folder-bar { display: inline-block; width: 14ch; height: 13px; vertical-align: -1px; }
+#view .c-folder-bar > i { display: block; height: 100%; background: color-mix(in srgb, var(--warn) 70%, transparent); transition: width .2s var(--card-ease); }
+#view .c-folder-size { display: inline-block; width: 9ch; text-align: right; color: var(--warn); }
+#view .c-folder-files { display: inline-block; width: 11ch; text-align: right; color: var(--dim); }
+#view .c-risk-auto .c-risk-fold { animation: cards-risk-fold .5s var(--card-ease) forwards; }
+#view .c-risk-folded .c-risk-fold { grid-template-rows: 0fr; opacity: 0; visibility: hidden; }
+@keyframes cards-risk-fold { 0% { grid-template-rows: 1fr; opacity: 1; } 100% { grid-template-rows: 0fr; opacity: 0; } }
+#view .c-expanded .c-line { height: auto; min-height: 22px; white-space: normal; }
+#view .c-expanded .c-left { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; }
+#view .c-expanded .c-code-header { white-space: pre; }
+#view .c-compaction.c-expanded > .c-content > .c-line { height: 22px; white-space: nowrap; }
+#view .c-compaction.c-expanded > .c-content > .c-line > .c-left { white-space: nowrap; text-overflow: ellipsis; }
+
+/* Replays arrive settled; hidden pages and folded children do no animation work. */
+#view .c-instant, #view .c-instant *, #view .c-instant *::before, #view .c-instant *::after,
+#view .c-picture-instant *, #view .c-picture-instant *::before, #view .c-picture-instant *::after { transition: none !important; }
+#view .c-instant.c-arrive, #view .c-instant.c-arrive > .c-content,
+#view .c-instant .c-new, #view .c-instant .c-new *,
+#view .c-instant .c-picture, #view .c-instant .c-picture-ring, #view .c-instant .c-crop, #view .c-instant .c-handle,
+#view .c-picture-instant .c-picture-ring, #view .c-picture-instant .c-crop, #view .c-picture-instant .c-handle { animation: none !important; }
+#view .c-folded > .c-content > .c-group-fold *, #view .c-folded > .c-content > .c-group-fold *::before,
+#view .c-folded > .c-content > .c-group-fold *::after { animation: none !important; }
+#view .c-auto-fold > .c-content > .c-group-fold *, #view .c-auto-fold > .c-content > .c-group-fold *::before,
+#view .c-auto-fold > .c-content > .c-group-fold *::after { animation-play-state: paused !important; transition: none !important; }
+#view[hidden] .view-card, #view[hidden] .view-card *, #view[hidden] .view-card *::before, #view[hidden] .view-card *::after,
+#view.c-page-hidden .view-card, #view.c-page-hidden .view-card *, #view.c-page-hidden .view-card *::before, #view.c-page-hidden .view-card *::after,
+#view.view-hidden .view-card, #view.view-hidden .view-card *, #view.view-hidden .view-card *::before, #view.view-hidden .view-card *::after,
+#view .c-offscreen, #view .c-offscreen *, #view .c-offscreen *::before, #view .c-offscreen *::after { animation-play-state: paused !important; transition: none !important; }
+/* c-away: a running card scrolled out of view (set by the shared IntersectionObserver) holds its loops. */
+#view .c-away, #view .c-away *, #view .c-away *::before, #view .c-away *::after { animation-play-state: paused !important; }
+#view .c-arrive .c-spinner::before { animation-play-state: paused; }
+#view .c-arrive * { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  #view .view-card, #view .view-card *, #view .view-card *::before, #view .view-card *::after { animation-duration: .001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0ms !important; }
+}
+@container (max-width: 600px) {
+  #view .c-film { gap: 10px; margin-left: 0; padding: 8px 0 8px 8px; }
+  #view .c-film-strip { flex: 0 1 55%; max-width: 55%; gap: 8px; }
+  #view .c-readout { flex: 1 1 0; }
+  #view .c-risk-rail { width: 3ch; }
+  #view .c-folder-name { width: 18ch; }
+  #view .c-folder-bar { width: 8ch; }
+}
+
+

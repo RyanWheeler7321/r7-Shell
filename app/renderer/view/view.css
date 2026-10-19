@@ -1,0 +1,85 @@
+@font-face {
+  font-family: 'Sometype Mono';
+  src: local('Sometype Mono');
+  font-weight: 100 900;
+}
+
+#view {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 8;
+  overflow: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-width: none;
+  background: transparent;
+  color: var(--text);
+  font-family: 'Sometype Mono', monospace;
+  font-size: 15px;
+  line-height: 22px;
+  --cell-w: 9px;
+  --view-zoom: 1;
+  -webkit-app-region: no-drag;
+}
+#view[hidden] { display: none; }
+/* Terminal zoom (Ctrl+= / Ctrl+-) scales the cards' text and spacing with it; the column stays over the input box. */
+#view-column > * { zoom: var(--view-zoom); }
+/* Opening: invisible (not display:none, so it still lays out) until the bottom is stable, then a short fade. */
+#view { transition: opacity .15s ease-out; }
+#view.view-opening { visibility: hidden; opacity: 0; transition: none; }
+body.r7-view #drag { z-index: 9; }
+#view, #view * { box-sizing: border-box; }
+#view-column {
+  display: flex;
+  flex-direction: column;
+  min-height: max(100%, var(--follow-height, 0px));
+  /* view.js sets --col-left / --col-width to the input box's left border and outer width (full width when there is no box). */
+  margin-left: var(--col-left, 0px);
+  width: var(--col-width, 100%);
+  max-width: calc(100% - var(--col-left, 0px));
+  /* The chat starts under the app panel when one is up; a longer chat still scrolls on behind it. */
+  padding: calc(14px + var(--r7-panel-h, 0px)) 8px 8px;
+}
+#view .view-block {
+  flex: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#view .view-placeholder,
+#view .view-spacer {
+  flex: none;
+  min-width: 0;
+  pointer-events: none;
+  contain: strict;
+}
+#view .view-type-caret {
+  display: inline-block;
+  width: calc(var(--cell-w) * 0.22222222);
+  height: 1.15em;
+  margin-right: calc(var(--cell-w) * -0.22222222);
+  background: var(--accent);
+  vertical-align: -0.2em;
+  pointer-events: none;
+}
+#view .view-type-caret[hidden] { display: none; }
+#view.view-hidden *, #view.view-hidden *::before, #view.view-hidden *::after {
+  animation-play-state: paused !important;
+}
+#view ::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* The page draws the transcript; the terminal's own inline images (left in its buffer) stay hidden under it. */
+body.r7-view .xterm-image-layer { display: none; }
+
+/* The working line under the last block (view.js updateNow): ring, "Thinking", clock. */
+#view .view-now { display: flex; flex: none; align-items: center; gap: 1ch; height: 22px; margin-top: 4px; color: var(--accent); }
+#view .view-now[hidden] { display: none; }
+#view .view-now.view-now-reserved[hidden] { display: flex; }
+#view .view-now[hidden] > * { display: none; }
+#view .view-now .r7-ring { --tk: 1.05em; margin: 0 .075em; }
+#view .view-now-label { color: var(--muted); }
+#view .view-now-clock { color: var(--dim); }
+/* Any box inside the page that scrolls gets a thin, dark scrollbar, never Chromium's bright default. */
+#view { scrollbar-color: var(--subtle) transparent; }
+#view * { scrollbar-width: thin; }
+
+

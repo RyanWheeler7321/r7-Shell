@@ -1,5 +1,6 @@
 'use strict';
-// Settings, the daemon, window config, paths and logs for the r7-Shell app.
+// Shared by the r7-Shell app and any other app that embeds a session with this same
+// renderer: settings, the daemon, window config, paths and logs.
 
 const { execFile, spawn } = require('child_process');
 const fs = require('fs');
@@ -56,7 +57,15 @@ function readSettings() {
   return { ...DEFAULTS, ...extra, ...own };
 }
 
-// Merged with what's on disk, so a size saved from one window doesn't drop the others.
+// Merged with what's on disk, so two apps showing sessions never drop each other's sizes.
+// Zoom of a window's page and task title (renderer.js r7Zoom), per template: { page, title }.
+function saveZoom(template, kind, value) {
+  const all = readJson(settingsFile, {});
+  const zooms = { ...(all.zooms || {}), [template]: { ...(all.zooms?.[template] || {}), [kind]: value } };
+  writeJson(settingsFile, { ...readJson(settingsFile, {}), zooms });
+  return zooms;
+}
+
 function saveFontSize(template, size) {
   const fontSizes = { ...(readJson(settingsFile, {}).fontSizes || {}), [template]: size };
   writeJson(settingsFile, { ...readJson(settingsFile, {}), fontSizes });
@@ -64,16 +73,28 @@ function saveFontSize(template, size) {
 }
 
 // One JSONL log per host in logs/ (`r7shell log <name>`), rotated at 5MB.
+// The size is counted here instead of read from disk per line; during a restart both app copies
+// write the same file, so the real size is checked before rotating.
 function makeLog(name) {
   const file = path.join(STATE, 'logs', `${name}.jsonl`);
+  const max = 5 * 1024 * 1024;
+  let size = -1, failed = false;
+  const realSize = () => { try { return fs.statSync(file).size; } catch { return 0; } };
   return function log(lvl, ev, data = {}) {
     try {
-      if (fs.existsSync(file) && fs.statSync(file).size > 5 * 1024 * 1024) {
+      const line = JSON.stringify({ t: new Date().toISOString(), lvl, ev, ...data }) + '\n';
+      if (size < 0 || size > max) size = realSize();
+      if (size > max) {
         for (let i = 2; i >= 1; i--) { try { fs.renameSync(`${file}.${i}`, `${file}.${i + 1}`); } catch {} }
         fs.renameSync(file, `${file}.1`);
+        size = 0;
       }
-      fs.appendFileSync(file, JSON.stringify({ t: new Date().toISOString(), lvl, ev, ...data }) + '\n');
-    } catch {}
+      fs.appendFileSync(file, line);
+      size += Buffer.byteLength(line);
+    } catch (err) {
+      // A log that can't be written says so once, on stderr, instead of failing silently.
+      if (!failed) { failed = true; console.error(`r7shell: can't write ${file}: ${err.message}`); }
+    }
   };
 }
 
@@ -104,7 +125,7 @@ function api(port, method, route, body) {
 function winToWsl(p) {
   return p
     .replace(/^\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+/i, '')
-    .replace(/^([A-Za-z]):\\/, (_, d) => `/mnt/${d.toLowerCase()}/`)
+    .replace(/^([A-Za-z]):[\\/]/, (_, d) => `/mnt/${d.toLowerCase()}/`)
     .replace(/\\/g, '/');
 }
 
@@ -176,10 +197,11 @@ function rendererConfig(session, settings, gpu) {
   if (settings.fontSizes?.[session.template]) font.size = settings.fontSizes[session.template];
   const tpl = readTemplate(session.template);
   return {
-    session: session.id, template: session.template, port: settings.port, token: token(), gpu, theme: themeFor(session.theme), font,
-    padding: settings.padding, scrollSpeed: settings.scrollSpeed, scrollEaseMs: settings.scrollEaseMs, cursorGlideMs: settings.cursorGlideMs,
+    session: session.id, template: session.template, port: settings.port, token: token(), gpu, theme: themeFor(session.theme), font, fit: tpl.fit,
+    padding: settings.padding, deviceScale: settings.deviceScale, scrollSpeed: settings.scrollSpeed, scrollEaseMs: settings.scrollEaseMs, cursorGlideMs: settings.cursorGlideMs,
     cursor: { ...DEFAULTS.cursor, ...settings.cursor }, fadeMs: settings.fadeMs, scrollback: settings.scrollback, title: session.title,
     cwd: session.cwd, home: session.home, messageStart: session.messageStart ?? tpl.messageStart, distro: settings.distro || '',
+    zoom: settings.zooms?.[session.template] || {},
     launch: tpl.launch || null, r7harness: !!tpl.r7harness, questionColor: tpl.questionColor || '#ffc857', extras: extrasAssets(settings),
   };
 }
@@ -201,7 +223,7 @@ function savePicture(dataUrl) {
 // folder) becomes a link when it exists. Returns the Windows path, or null.
 
 function toWindowsPath(p, cwd, home, distro) {
-  if (/^[A-Za-z]:\\/.test(p)) return p;
+  if (/^[A-Za-z]:[\\/]/.test(p) || /^(?:\\\\|\/\/)/.test(p)) return p.replace(/\//g, '\\');
   if (p.startsWith('~/')) p = `${home}${p.slice(1)}`;
   else if (!p.startsWith('/')) p = path.posix.join(cwd || '/', p);
   const m = /^\/mnt\/([a-z])(\/.*)?$/.exec(p);
@@ -225,7 +247,7 @@ async function checkPath(p, cwd, home, distro) {
 }
 
 module.exports = {
-  ROOT, VERSION, STATE, DEFAULTS, settingsFile, readJson, writeJson, readSettings, saveFontSize, makeLog,
+  ROOT, VERSION, STATE, DEFAULTS, settingsFile, readJson, writeJson, readSettings, saveFontSize, saveZoom, makeLog,
   token, api, winToWsl, ensureDaemon, themeFor, readTemplate, rendererConfig, savePicture, checkPath,
   wslToWin, extrasDir, extrasAssets, distroArgs,
 };

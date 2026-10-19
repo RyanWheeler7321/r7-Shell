@@ -8,7 +8,7 @@ const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'version.json'), 'utf8')).version;
 
-// State lives in %LOCALAPPDATA%\r7shell so it stays out of the repo.
+// State lives in %LOCALAPPDATA%\r7shell so it stays out of the backed-up repo.
 // A repo under /mnt/c/Users/<user>/... gives the Windows user directly; otherwise
 // Windows is asked once.
 let stateCache = '';
@@ -50,19 +50,39 @@ function writeJson(file, data) {
 
 // JSONL log with simple size rotation: file, file.1, file.2, file.3.
 function makeLog(file, maxBytes = 5 * 1024 * 1024) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  let size = 0;
-  try { size = fs.statSync(file).size; } catch {}
-  return function log(lvl, ev, data) {
-    const line = JSON.stringify({ t: new Date().toISOString(), lvl, ev, ...data }) + '\n';
-    if (size + line.length > maxBytes) {
-      for (let i = 2; i >= 1; i--) { try { fs.renameSync(`${file}.${i}`, `${file}.${i + 1}`); } catch {} }
-      try { fs.renameSync(file, `${file}.1`); } catch {}
-      size = 0;
+  let size = -1, reported = 0;
+  function log(lvl, ev, data) {
+    try {
+      if (size < 0) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        try { size = fs.statSync(file).size; }
+        catch (err) { if (err.code !== 'ENOENT') throw err; size = 0; }
+      }
+      const line = JSON.stringify({ t: new Date().toISOString(), lvl, ev, ...data,
+        ...(log.failures > reported ? { logger_failures: log.failures } : {}) }) + '\n';
+      const bytes = Buffer.byteLength(line);
+      if (bytes > maxBytes) throw new Error('log line exceeds size limit');
+      if (size + bytes > maxBytes) {
+        for (let i = 2; i >= 0; i--) {
+          try { fs.renameSync(i ? `${file}.${i}` : file, `${file}.${i + 1}`); }
+          catch (err) { if (err.code !== 'ENOENT') throw err; }
+        }
+        size = 0;
+      }
+      fs.appendFileSync(file, line);
+      size += bytes;
+      reported = log.failures;
+    } catch (err) {
+      size = -1;
+      log.failures++;
+      if (log.failures === 1) console.error(`r7shell: can't write ${file}: ${err.message}`);
     }
-    fs.appendFileSync(file, line);
-    size += line.length;
-  };
+  }
+  log.failures = 0;
+  process.once('exit', () => {
+    if (log.failures > Math.max(1, reported)) console.error(`r7shell: ${path.basename(file)} logger_failures=${log.failures}`);
+  });
+  return log;
 }
 
 // Templates come from templates/ and then <extras>/templates, which wins on the

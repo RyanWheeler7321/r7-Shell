@@ -6,12 +6,21 @@
 <link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="pins.css">
+<link rel="stylesheet" href="dock.css">
+<link rel="stylesheet" href="steps.css">
+<link rel="stylesheet" href="view/view.css">
+<link rel="stylesheet" href="view/cards.css">
+<link rel="stylesheet" href="view/reply.css">
+<link rel="stylesheet" href="view/keys.css">
+<link rel="stylesheet" href="view/fold.css">
 </head>
 <body>
 <div id="drag"></div>
 <div id="term"></div>
+<div id="view" hidden></div>
 <div id="find" hidden><input id="find-text" spellcheck="false" placeholder="Find"><span id="find-count"></span></div>
 <div id="status" hidden></div>
+<script src="fit-bridge.js"></script>
 <script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
 <script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
 <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
@@ -20,15 +29,25 @@
 <script src="../node_modules/@xterm/addon-image/lib/addon-image.js"></script>
 <script src="../node_modules/@xterm/addon-search/lib/addon-search.js"></script>
 <script src="renderer.js"></script>
+<script src="view/view.js"></script>
+<script src="view/cards.js"></script>
+<script src="view/reply.js"></script>
+<script src="view/keys.js"></script>
+<script src="view/fold.js"></script>
 <script src="api.js"></script>
 <script src="pins.js"></script>
+<script src="panel.js"></script>
 <script src="glow.js"></script>
 <script src="marks.js"></script>
+<script src="steps.js"></script>
 <script src="launch.js"></script>
 <script src="input.js"></script>
 <script src="fade.js"></script>
 <script src="cycle.js"></script>
+<script src="themefx.js"></script>
 <script src="motion.js"></script>
+<script src="dock.js"></script>
+<script src="loader.js"></script>
 <script src="extras.js"></script>
 </body>
 </html>

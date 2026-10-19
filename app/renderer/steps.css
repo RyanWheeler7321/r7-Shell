@@ -1,0 +1,112 @@
+/* Transcript graphics use the live terminal palette; picture frames are theme-proof. */
+.r7-steps {
+  --sm-ease: cubic-bezier(.333333, 0, .666667, 1);
+  pointer-events: none; overflow: visible !important; color: var(--sm-fg);
+}
+.r7-steps [hidden] { display: none !important; }
+
+/* Code barcode: one stroke per supplied line, with a quiet lens and fan into the pane. */
+.sm-bars { position: absolute; border-bottom: 1px solid color-mix(in srgb, var(--r7-accent) 25%, transparent); }
+.sm-bar { position: absolute; bottom: 0; background: color-mix(in srgb, var(--r7-accent) 45%, var(--sm-fg) 15%); }
+.sm-bar.lit { background: var(--r7-accent); }
+.sm-tags { position: absolute; white-space: pre; overflow: hidden; line-height: 1; }
+.sm-tag { position: absolute; bottom: 1px; color: var(--sm-warn); }
+.sm-lens, .sm-shade, .sm-fan { position: absolute; box-sizing: border-box; }
+.sm-lens {
+  border: 1px solid color-mix(in srgb, var(--r7-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--r7-accent) 4.5%, transparent);
+  transition: left 250ms var(--sm-ease), width 250ms var(--sm-ease), border-color 250ms var(--sm-ease);
+}
+.sm-lens.moving { border-color: var(--r7-accent); }
+.sm-shade {
+  background: color-mix(in srgb, var(--bg, #12010a) 30%, transparent);
+  transition: left 250ms var(--sm-ease), width 250ms var(--sm-ease);
+}
+.sm-fan { background: color-mix(in srgb, var(--r7-accent) 4.5%, transparent); transition: clip-path 250ms var(--sm-ease); }
+.sm-snap .sm-lens, .sm-snap .sm-shade, .sm-snap .sm-fan { transition: none; }
+
+/* A filmstrip keeps its DOM when a mark is resent, so existing pictures never reappear. */
+.sm-film {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  margin-left: calc(12px * var(--sm-scale)); padding-left: calc(8px * var(--sm-scale));
+  border-left: 1px solid color-mix(in srgb, var(--r7-accent) 25%, transparent);
+  gap: calc(14px * var(--sm-scale)); padding-right: calc(10px * var(--sm-scale));
+  transition: margin-left 500ms var(--sm-ease);
+}
+.sm-film.pair { margin-left: calc(52px * var(--sm-scale)); padding-left: 0; border-left: 0; }
+.sm-film.pair.folded { margin-left: calc(30px * var(--sm-scale)); }
+.sm-strip { display: flex; align-items: center; gap: calc(14px * var(--sm-scale)); min-width: 0; flex: none; }
+.pair .sm-strip { gap: calc(12px * var(--sm-scale)); }
+.sm-slot { position: relative; flex: none; transition: width 300ms var(--sm-ease), height 300ms var(--sm-ease); }
+.folded .sm-slot { transition-duration: 500ms; }
+.sm-thumb {
+  position: absolute; inset: 0; box-sizing: border-box; border-radius: 6px; opacity: .8;
+  border: 1px solid rgba(150, 150, 150, .6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .3), 0 4px 12px rgba(0, 0, 0, .4);
+  background-color: #9a9a9a;
+  background-image: linear-gradient(45deg, #707070 25%, transparent 25%, transparent 75%, #707070 75%), linear-gradient(45deg, #707070 25%, transparent 25%, transparent 75%, #707070 75%);
+  background-size: 10px 10px; background-position: 0 0, 5px 5px;
+  transition: opacity 300ms var(--sm-ease), box-shadow 300ms var(--sm-ease);
+}
+.sm-thumb::after {
+  content: ''; position: absolute; inset: 0; border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); pointer-events: none;
+}
+.sm-thumb.on {
+  opacity: 1;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--r7-accent) 90%, transparent), 0 0 0 1px rgba(0, 0, 0, .3), 0 4px 12px rgba(0, 0, 0, .4);
+}
+.pair .sm-thumb, .folded .sm-thumb { opacity: 1; }
+.sm-clip { position: absolute; inset: 0; border-radius: 5px; overflow: hidden; }
+.r7-thumbs .sm-thumb img { display: block; width: 100%; height: 100%; object-fit: contain; margin: 0; border-radius: 0; }
+.sm-ring { position: absolute; inset: -9px; border-radius: 14px; border: 2px solid var(--r7-accent); opacity: 0; pointer-events: none; }
+.sm-slot.loading .sm-thumb { background: color-mix(in srgb, var(--sm-fg) 8%, transparent); border-style: dashed; box-shadow: none; }
+.sm-slot.loading img, .sm-slot.failed img { visibility: hidden; }
+.sm-slot.failed .sm-thumb { border-style: dashed; }
+.sm-slot.failed .sm-thumb::before { content: '×'; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; background: #3338; }
+.sm-crop {
+  position: absolute; box-sizing: border-box; border: 1.5px solid #fff;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(0, 0, 0, .45);
+  transition: left 1100ms var(--sm-ease), top 1100ms var(--sm-ease), width 1100ms var(--sm-ease), height 1100ms var(--sm-ease);
+}
+.sm-handle { position: absolute; width: 6px; height: 6px; box-sizing: border-box; background: #fff; border: 1px solid rgba(0, 0, 0, .65); }
+.sm-handle.h0 { left: -4px; top: -4px; }
+.sm-handle.h1 { right: -4px; top: -4px; }
+.sm-handle.h2 { left: -4px; bottom: -4px; }
+.sm-handle.h3 { right: -4px; bottom: -4px; }
+.sm-index, .sm-label {
+  position: absolute; left: 4px; padding: 0 5px; border-radius: 3px;
+  font-size: calc(11px * var(--sm-scale)); line-height: calc(15px * var(--sm-scale));
+  color: #fff; background: rgba(0, 0, 0, .62); text-shadow: 0 1px 2px #000;
+  transition: opacity 250ms var(--sm-ease);
+}
+.sm-index { top: 4px; }
+.sm-label { bottom: 4px; }
+.folded .sm-index, .folded .sm-label, .folded .sm-crop { opacity: 0; }
+.sm-arrow { flex: none; width: calc(16px * var(--sm-scale)); text-align: center; font-size: calc(17px * var(--sm-scale)); color: var(--r7-accent); }
+.sm-readout {
+  position: relative; flex: none; min-width: 0; height: calc(2 * var(--sm-row)); overflow: hidden;
+  transition: opacity 500ms var(--sm-ease), width 500ms var(--sm-ease);
+}
+.sm-readout-text { position: absolute; inset: 0; white-space: nowrap; }
+.sm-readout-name { line-height: var(--sm-row); color: var(--sm-fg); overflow: hidden; text-overflow: ellipsis; }
+.sm-readout-detail { line-height: var(--sm-row); font-size: calc(13px * var(--sm-scale)); color: color-mix(in srgb, var(--sm-fg) 65%, transparent); overflow: hidden; text-overflow: ellipsis; }
+.folded .sm-readout { opacity: 0; }
+
+/* Expanded read maps occupy three real rows; old inline marks stay compact. */
+.sm-map-bars { position: absolute; inset: 0; display: flex; align-items: center; gap: 1px; }
+.sm-map-bars i { display: block; flex: 1 1 0; min-width: 0; border-radius: 1px; background: color-mix(in srgb, var(--r7-accent) 25%, transparent); }
+.sm-map-bars i.on { background: var(--r7-accent); box-shadow: 0 0 6px color-mix(in srgb, var(--r7-accent) 70%, transparent); }
+.sm-map-lens {
+  position: absolute; top: 15%; height: 70%; box-sizing: border-box; border: 1px solid var(--r7-accent); border-radius: 3px;
+  transition: left 250ms var(--sm-ease), width 250ms var(--sm-ease);
+}
+.sm-map-label, .sm-ticks { display: none; }
+.wide .sm-map-bars { top: var(--sm-row); bottom: var(--sm-row); }
+.wide .sm-map-lens { top: calc(var(--sm-row) - 2px * var(--sm-scale)); height: calc(var(--sm-row) + 4px * var(--sm-scale)); }
+.wide .sm-map-label { display: block; position: absolute; top: 0; height: var(--sm-row); line-height: var(--sm-row); white-space: nowrap; overflow: hidden; color: var(--r7-accent); font-size: calc(13px * var(--sm-scale)); }
+.wide .sm-ticks { display: flex; position: absolute; left: 0; right: 0; bottom: 0; height: calc(20px * var(--sm-scale)); justify-content: space-between; font-size: calc(13px * var(--sm-scale)); color: color-mix(in srgb, var(--sm-fg) 60%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .r7-steps * { transition: none !important; }
+}

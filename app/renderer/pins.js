@@ -1,7 +1,10 @@
 'use strict';
-// Pinned media: a strip of thumbnails at the top right that grow into a preview on
-// hover. `r7shell pin` or r7shell.setPins(entries) sends them; entries are newest
-// first. Only the thumbnail strip takes pointer events; the preview never does.
+// Pinned media: a column of thumbnails at the top right that glow and grow into a preview
+// on hover, left of the column; a click opens pictures in the viewer and videos in their default app.
+// `r7shell pin` or r7shell.setPins(entries) sends them;
+// entries are newest first. Only the thumbnail column takes pointer events; the preview
+// never does. It sits just under the session panel, which spans the top (panel.js sets
+// --r7-panel-h and sends `r7-panel-h` when it changes).
 
 (() => {
   const MAX_MEDIA = 8;
@@ -28,6 +31,7 @@
   const current = () => S.entries[S.index] || null;
   const viewWidth = () => document.documentElement.clientWidth;
   const viewHeight = () => document.documentElement.clientHeight;
+  const panelHeight = () => parseFloat(document.documentElement.style.getPropertyValue('--r7-panel-h')) || 0;
 
   function fileUrl(path) {
     const p = path.replace(/\\/g, '/');
@@ -62,23 +66,24 @@
     return entries;
   }
 
-  // Wheel-up goes older, wheel-down newer, without wrapping.
+  // Wheel-up goes older, wheel-down newer, without wrapping (cycle_entry_index).
   function cycleEntryIndex(index, wheelDelta, count) {
     if (count <= 0) return 0;
     if (!wheelDelta) return Math.max(0, Math.min(index, count - 1));
     return Math.max(0, Math.min(index + (wheelDelta > 0 ? 1 : -1), count - 1));
   }
 
-  // Left-to-right slots; media index 0 sits at the right edge.
-  function thumbnailLayout(count, width) {
+  // Top-to-bottom slots; media index 0 sits at the top. The column takes at most 60% of
+  // the window's height and stays off windows too narrow for it.
+  function thumbnailLayout(count, width, height) {
     count = Math.max(0, Math.min(MAX_MEDIA, count));
-    const usable = Math.max(0, width - 2 * INSET - RAIL);
-    if (!count) return [];
+    if (!count || width < 2 * INSET + RAIL + 4 * THUMB_MIN) return [];
+    const usable = Math.max(0, Math.floor(height * 0.6) - TOP_INSET);
     const forTiles = usable - GAP * (count - 1);
     if (forTiles < THUMB_MIN * count) return [];
     const size = Math.min(THUMB_MAX, Math.floor(forTiles / count));
     const slots = [];
-    for (let i = 0; i < count; i++) slots.push({ media: count - 1 - i, x: i * (size + GAP), size });
+    for (let i = 0; i < count; i++) slots.push({ media: i, y: i * (size + GAP), size });
     return slots;
   }
 
@@ -97,10 +102,13 @@
     if (S.root) return;
     const root = document.createElement('div');
     root.id = 'r7-pins';
+    root.style.setProperty('--r7-accent', window.r7Accent || colors.cursor || colors.fg);
     const preview = document.createElement('div');
     preview.className = 'r7-pins-preview';
     const strip = document.createElement('div');
     strip.className = 'r7-pins-strip';
+    // Under the session panel, when there is one.
+    strip.style.top = `calc(${TOP_INSET}px + var(--r7-panel-h, 0px))`;
     const rail = document.createElement('div');
     rail.className = 'r7-pins-rail';
     strip.append(rail);
@@ -117,7 +125,10 @@
     for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu']) {
       strip.addEventListener(type, swallow);
     }
+    strip.addEventListener('click', onClick);
+    strip.addEventListener('contextmenu', onMenu);
     window.addEventListener('resize', onResize);
+    window.addEventListener('r7-panel-h', onResize);
   }
 
   function unmount() {
@@ -126,6 +137,7 @@
     clearTimeout(S.leaveTimer);
     cancelAnimationFrame(S.resizeFrame);
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('r7-panel-h', onResize);
     S.root.remove();
     Object.assign(S, { root: null, strip: null, rail: null, preview: null, slots: [], hovered: null });
     S.tiles.clear();
@@ -168,7 +180,8 @@
     const entry = current();
     if (!S.root || !entry) return;
     const capacity = Math.max(...S.entries.map((e) => e.media.length));
-    S.slots = thumbnailLayout(capacity, viewWidth());
+    // The room under the panel.
+    S.slots = thumbnailLayout(capacity, viewWidth(), viewHeight() - panelHeight());
     if (!S.slots.length) {
       // Too narrow: nothing shows and nothing catches events.
       endHover(true);
@@ -177,8 +190,9 @@
     }
     S.strip.hidden = false;
     const size = S.slots[0].size;
-    S.strip.style.width = `${S.slots[S.slots.length - 1].x + size + RAIL}px`;
-    S.strip.style.height = `${size}px`;
+    const columnHeight = S.slots[S.slots.length - 1].y + size;
+    S.strip.style.width = `${size + RAIL}px`;
+    S.strip.style.height = `${columnHeight}px`;
 
     for (const [index, tile] of S.tiles) {
       if (index >= entry.media.length) { tile.el.remove(); S.tiles.delete(index); }
@@ -196,11 +210,11 @@
         tile = { el, path: media.path };
         S.tiles.set(slot.media, tile);
       }
-      Object.assign(tile.el.style, { left: `${slot.x}px`, width: `${size}px`, height: `${size}px` });
+      Object.assign(tile.el.style, { left: '0px', top: `${slot.y}px`, width: `${size}px`, height: `${size}px` });
       tile.el.style.setProperty('--side', `${Math.max(5, Math.floor(size / 4))}px`);
     }
     markTiles();
-    renderRail(size);
+    renderRail(columnHeight);
   }
 
   // Newest at the bottom, current larger, distant dots fading; a bounded window of 7.
@@ -227,24 +241,23 @@
   }
 
   function markTiles() {
-    const covered = S.layer ? S.layer.index : null;
     for (const [index, tile] of S.tiles) {
       tile.el.classList.toggle('hovered', index === S.hovered);
-      tile.el.classList.toggle('covered', index === covered);
     }
   }
 
   // ---- preview -----------------------------------------------------------------
 
-  // Grow the thumbnail's contained image rect toward one shared top/right anchor.
+  // Grow the thumbnail's contained image rect out to the left of the column, its top
+  // moving up to the column's top.
   function layerRect(layer, progress) {
     const dims = S.dims.get(layer.media.path);
     if (!dims || !dims.w || !dims.h) return null;
     const o = layer.origin;
     const start = containedRect(dims.w, dims.h, o.left, o.top, o.width, o.height);
-    const anchor = viewWidth() - INSET - RAIL;
-    const right = Math.min(viewWidth() - PREVIEW_INSET, anchor);
-    const top = start.top;
+    const column = S.strip.getBoundingClientRect();
+    const right = Math.max(1, column.left - GAP);
+    const top = column.top;
     const pad = PREVIEW_INSET + 24;
     const availW = Math.max(1, right - pad);
     const availH = Math.max(1, viewHeight() - pad - top);
@@ -254,7 +267,8 @@
     const w = Math.max(1, Math.round(start.width + (endW - start.width) * progress));
     const h = Math.max(1, Math.round(start.height + (endH - start.height) * progress));
     const r = Math.round(start.left + start.width + (right - start.left - start.width) * progress);
-    return { left: r - w, top: start.top, width: w, height: h };
+    const t = Math.round(start.top + (top - start.top) * progress);
+    return { left: r - w, top: t, width: w, height: h };
   }
 
   function place() {
@@ -389,8 +403,8 @@
   function tileAt(e) {
     const entry = current();
     if (!entry) return null;
-    const x = e.clientX - S.strip.getBoundingClientRect().left;
-    const slot = S.slots.find((s) => x >= s.x && x < s.x + s.size);
+    const y = e.clientY - S.strip.getBoundingClientRect().top;
+    const slot = S.slots.find((s) => y >= s.y && y < s.y + s.size);
     return slot && slot.media < entry.media.length ? slot.media : null;
   }
 
@@ -400,7 +414,25 @@
     S.leaveTimer = 0;
     setHovering(true);
     const index = tileAt(e);
+    S.strip.classList.toggle('on-tile', index !== null);
     if (index !== null) showMedia(index);
+  }
+
+  function onClick(e) {
+    if (e.button !== 0) return;
+    const index = tileAt(e);
+    const entry = current();
+    if (index === null || !entry) return;
+    const media = entry.media[index];
+    r7.log('info', 'pin.open', { path: media.path });
+    r7.openPath(media.path);
+  }
+
+  function onMenu(e) {
+    const index = tileAt(e);
+    const entry = current();
+    if (index === null || !entry) return;
+    r7.pictureMenu({ path: entry.media[index].path }, e.clientX, e.clientY);
   }
 
   function onLeave(e) {
@@ -417,6 +449,7 @@
     clearTimeout(S.leaveTimer);
     S.leaveTimer = 0;
     setHovering(false);
+    if (S.strip) S.strip.classList.remove('on-tile');
     S.hovered = null;
     if (immediate) clearPreview(); else collapse();
     markTiles();
@@ -428,7 +461,7 @@
     // Line/page deltas step at once; trackpad pixels accumulate to one step.
     S.wheelAcc += e.deltaMode ? Math.sign(e.deltaY) * 100 : e.deltaY;
     if (Math.abs(S.wheelAcc) < 50) return;
-    const delta = S.wheelAcc < 0 ? 1 : -1; // wheel-up is older
+    const delta = S.wheelAcc < 0 ? 1 : -1; // wheel-up is older, like Qt's angleDelta > 0
     S.wheelAcc = 0;
     const next = cycleEntryIndex(S.index, delta, S.entries.length);
     if (next === S.index) return;
@@ -495,7 +528,7 @@
     // Pins carry Windows paths, reply pictures may carry WSL ones.
     const same = (p) => String(p).replace(/\\/g, '/').replace(/^\/mnt\/([a-z])\//i, '$1:/').toLowerCase();
     const paths = new Set(entry.media.map((m) => same(m.path)));
-    const from = [...document.querySelectorAll('.r7-image img')].find((img) => paths.has(same(img.dataset.path)) && img.offsetParent && img.width);
+    const from = [...document.querySelectorAll('.r7-image img, .reply-picture-image')].find((img) => paths.has(same(img.dataset.path)) && img.offsetParent && img.width);
     const tile = S.tiles.get(0)?.el;
     if (!from || !tile) { pop(); return; }
     const a = from.getBoundingClientRect();

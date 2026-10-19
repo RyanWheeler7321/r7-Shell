@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  /* #t is the terminal's own rect inside this window. */
+  #t { position: absolute; --c: #ff4fb8; }
+  /* The focused bottom line (renderer/style.css #glow .bottom), taller and brighter
+     for the flash, even across the whole bottom. */
+  #g {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 192px; opacity: 0;
+    background: linear-gradient(to top, var(--c) 0, var(--c) 4px, color-mix(in srgb, var(--c) 65%, transparent) 35%, transparent);
+  }
+  #g.on { animation: flash 800ms ease-out 3 forwards; }
+  @keyframes flash { 0% { opacity: 1; filter: brightness(1.6); } 15% { opacity: 1; } 100% { opacity: 0; } }
+  /* A centered square accompanies the first completion flash. */
+  #core {
+    position: absolute; left: 50%; top: 50%; opacity: 0; border: 2px solid var(--c); border-radius: 6px; box-sizing: border-box;
+    background: color-mix(in srgb, var(--c) 22%, transparent); box-shadow: 0 0 26px 6px var(--c), inset 0 0 22px 4px var(--c);
+    transform: translate(-50%, -50%);
+  }
+  #core.on { animation: core 800ms ease-out forwards; }
+  @keyframes core { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.7); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: brightness(1.8); } 55% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.25); } }
+</style>
+<div id="t"><div id="g"></div><div id="core"></div></div>
+<script>
+  const t = document.getElementById('t');
+  const g = document.getElementById('g');
+  const core = document.getElementById('core');
+  // edges: where the terminal's own edges sit inside this window, in device pixels
+  // (exact) or CSS pixels.
+  function play(color, edges, first) {
+    const k = edges.device ? devicePixelRatio : 1;
+    for (const side of ['left', 'top', 'right', 'bottom']) t.style[side] = `${edges[side] / k}px`;
+    t.style.setProperty('--c', color);
+    const size = Math.min(t.clientWidth, t.clientHeight) * 0.16;
+    core.style.width = core.style.height = `${size}px`;
+    stop();
+    void t.offsetWidth;
+    // The window was just shown: start on its second frame so the first beat isn't lost.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      g.classList.add('on');
+      if (first) core.classList.add('on');
+    }));
+  }
+  function stop() {
+    g.classList.remove('on');
+    core.classList.remove('on');
+  }
+</script>

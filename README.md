@@ -6,7 +6,7 @@
 
 r7-Shell is a lean custom terminal for Windows, made for running agents like Claude Code, Codex and my own r7-Harness in WSL, as well as anything else you'd run in a terminal.
 
-Sessions run in the background in WSL, so they survive the app restarting or crashing, and the windows come back where they were. Closing a window ends its session, but `r7shell reopen` brings it back within 10 seconds. The `r7shell` command can start sessions, type into them, wait for output and take screenshots of a window, so an agent can run other terminals without touching your mouse or keyboard.
+Sessions run in the background in WSL, so they survive the app restarting or crashing, and the windows come back where they were. Closing a window keeps its session running too, and `r7shell reopen` brings the window back. The `r7shell` command can start sessions, type into them, wait for output and take screenshots of a window, so an agent can run other terminals without touching your mouse or keyboard.
 
 - Attention flash in the theme color when an agent finishes a response in a window you're not looking at, repeating every 30 seconds until you look
 - Hooks for Claude Code and Codex, and the normal terminal bell for anything else
@@ -16,18 +16,25 @@ Sessions run in the background in WSL, so they survive the app restarting or cra
 - Links and file paths open on a plain click, and images in the output open full size
 - Templates (command, folder, theme, font) and themes as small JSON files
 
+`r7shell panel` adds a panel across the top of a window. It shows a picture and a caption, and its buttons run programs, like a Play button for a game. It can also watch folders and re-run a render command, so the picture updates when files change.
+
 ![A game server console running in r7-Shell](assets/r7-console.gif)
 
 ## With r7-Harness
 
 r7-Harness and r7-Shell send each other a few extra things, so running r7-Harness in r7-Shell gives you bigger reply titles, pictures right inside replies, numbered questions you can click to start your answer, a bigger task title above the input box, and mouse editing in the input box (drag to select, `Ctrl+click` to move the cursor).
 
-The input box has animations for sending a message, switching models with `Ctrl+P` and changing the thinking level with `Shift+Tab`.
+In r7-Shell, r7-Harness's replies and steps are drawn in HTML instead of terminal text. Between replies, the agent's finished steps fold into one line that shows how many of each kind it ran, the pictures it looked at and how long it took. Clicking the line opens them. Subagents and background jobs each get a line above the input box that shows what they're doing, and builds and tests show their progress.
+
+The input box has animations for sending a message, switching models with `Ctrl+P` and changing the thinking level with `Shift+Tab`. Each model has its own colors and switch animation.
 
 <p>
-  <img src="assets/r7-launch.gif" alt="Typing while r7-Harness starts" width="32%">
-  <img src="assets/r7-ask.gif" alt="Sending a message and answering a question" width="32%">
-  <img src="assets/r7-switch.gif" alt="Switching models and the thinking level" width="32%">
+  <img src="assets/r7-launch.gif" alt="Typing while r7-Harness starts" width="49%">
+  <img src="assets/r7-ask.gif" alt="Sending a message and answering a question" width="49%">
+</p>
+<p>
+  <img src="assets/r7-switch.gif" alt="Switching models with Ctrl+P" width="49%">
+  <img src="assets/r7-steps.gif" alt="A reply and its folded steps" width="49%">
 </p>
 
 The r7harness template runs `r7harness launch`, so put it on your PATH first: `ln -s ~/r7-Harness/bin/r7harness ~/.local/bin/r7harness`.

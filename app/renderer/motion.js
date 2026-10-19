@@ -2,7 +2,7 @@
 // Short animations on r7-Harness's input box, drawn on one canvas over the screen, which
 // only draws while one of them runs: the sent message lifting into the chat, the thinking
 // level's gauge on the box's top border, a question's number hopping into the box
-// (marks.js calls motion.hop) and the chat folding away when r7-Harness compacts it
+// (marks.js calls motion.hop) and the chat folding away during compaction
 // (`OSC 7321;compact;start` and `;done`).
 
 const motion = (() => {
@@ -12,6 +12,10 @@ const motion = (() => {
   const ctx = canvas.getContext('2d');
   let effects = []; // { start, ms, draw(p, now) }
   let frame = 0;
+  let size = { w: 0, h: 0, dpr: 1 };
+  let letterWidth = 0;
+  const cellWidth = () => size.w / term.cols;
+  const rowHeight = () => size.h / term.rows;
 
   const easeOut = (p) => 1 - (1 - p) ** 3;
   const easeInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
@@ -21,7 +25,7 @@ const motion = (() => {
     const [r, g, b] = validHex(c) ? [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16)) : [255, 255, 255];
     return `rgba(${r},${g},${b},${clamp(a)})`;
   }
-  const accent = () => getComputedStyle(document.documentElement).getPropertyValue('--r7-accent').trim() || colors.cursor || colors.fg;
+  const accent = () => window.r7Accent || colors.cursor || colors.fg;
   const rowText = (r) => term.buffer.active.getLine(term.buffer.active.viewportY + r)?.translateToString(true) ?? '';
 
   function cellColor(cell) {
@@ -32,16 +36,18 @@ const motion = (() => {
 
   function add(effect) {
     if (document.hidden) return;
+    size = { w: screenEl.clientWidth, h: screenEl.clientHeight, dpr: window.devicePixelRatio || 1 };
+    ctx.font = `${term.options.fontSize}px ${term.options.fontFamily}`;
+    letterWidth = ctx.measureText('M').width;
     effects.push({ start: performance.now(), ...effect });
     if (!frame) frame = requestAnimationFrame(draw);
   }
 
   function draw() {
     frame = 0;
+    if (document.hidden) { stop(); return; }
     const now = performance.now();
-    const dpr = window.devicePixelRatio || 1;
-    const w = screenEl.clientWidth;
-    const h = screenEl.clientHeight;
+    const { w, h, dpr } = size;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
@@ -50,6 +56,10 @@ const motion = (() => {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
     for (const e of effects) {
       const p = (now - e.start) / e.ms;
       if (p >= 1) { e.end?.(); continue; }
@@ -58,14 +68,24 @@ const motion = (() => {
       ctx.restore();
     }
     effects = effects.filter((e) => now - e.start < e.ms);
+    ctx.restore();
     if (effects.length) frame = requestAnimationFrame(draw);
   }
+
+  function stop() {
+    cancelAnimationFrame(frame);
+    frame = 0;
+    effects = [];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
+  term.onResize(stop);
 
   function textFont(scale = 1) {
     ctx.font = `${term.options.fontSize * scale}px ${term.options.fontFamily}`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    ctx.letterSpacing = `${cellWidth() * scale - ctx.measureText('M').width}px`;
+    ctx.letterSpacing = `${(cellWidth() - letterWidth) * scale}px`;
   }
 
   // ---- send: the message flashes and snaps out of the box ---------------------------
@@ -119,7 +139,9 @@ const motion = (() => {
           const x0 = (box.left + 0.5) * cw - grow;
           const y0 = (box.top + 0.5) * ch - grow;
           const x1 = (box.right + 0.5) * cw + grow;
-          const y1 = (box.bottom + 0.5) * ch + grow;
+          // The box's last row holds text as well as its bottom corners, so the outline
+          // runs under that row, never through the message.
+          const y1 = (box.bottom + 1.1) * ch + grow;
           ctx.save();
           ctx.globalAlpha = 0.16 * k;
           ctx.fillStyle = '#ffffff';
@@ -294,7 +316,7 @@ const motion = (() => {
     });
   }
 
-  // Shift+Tab cycles the level; r7-Harness redraws the border a moment later.
+  // Shift+Tab cycles the level before the harness redraws the border.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Tab' || !e.shiftKey || e.ctrlKey || e.altKey || !harness.on) return;
     const now = readLevel();
@@ -362,10 +384,36 @@ const motion = (() => {
   // ---- compaction: the old chat folds into a seam, the new one opens from it ----------
   // The chat is copied when compaction starts (the GPU canvas can only be read right after
   // it draws, so the screen is redrawn once for it) and folded when it ends, before
-  // r7-Harness's reprint has drawn, while the reprint opens up behind it.
+  // the harness's reprint has drawn, while the reprint opens up behind it.
 
   let foldShot = null; // { canvas, rows, cols, chatRows }
   let wantFoldShot = false;
+  let clearPending = false;
+
+  window.addEventListener('r7-clear', () => {
+    stop();
+    foldShot = null;
+    wantFoldShot = false;
+    levelWatch = null;
+    clearPending = !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  });
+  term.onRender(() => {
+    if (!clearPending) return;
+    clearPending = false;
+    const box = findBox();
+    if (!box) return;
+    const color = accent();
+    add({
+      ms: 180,
+      draw(p) {
+        const cw = cellWidth(), ch = rowHeight();
+        ctx.strokeStyle = rgba(color, .3 * (1 - p));
+        ctx.lineWidth = 1;
+        ctx.strokeRect((box.left + .5) * cw, (box.top + .5) * ch,
+          (box.right - box.left) * cw, (box.bottom - box.top) * ch);
+      },
+    });
+  });
 
   function copyScreen() {
     const layers = [...screenEl.querySelectorAll('canvas')].filter((c) => c !== canvas && !c.id && c.width && c.height);
@@ -393,9 +441,9 @@ const motion = (() => {
     if (!shot || shot.rows !== term.rows || shot.cols !== term.cols) return;
     const line = accent();
     add({
-      ms: 460,
+      ms: 500,
       draw(p) {
-        const w = screenEl.clientWidth;
+        const w = size.w;
         const ch = rowHeight();
         const area = shot.chatRows * ch;
         const seam = area * 0.5;

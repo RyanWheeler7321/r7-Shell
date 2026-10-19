@@ -1,0 +1,271 @@
+/* Reply cues use the fixed REPLY_PALETTE from reply-style.ts. */
+#view .reply {
+  --reply-gap: 14px;
+  --reply-start: #A4A4B0;
+  --reply-money: #4FE3F0;
+  --reply-time: #6BF5A0;
+  --reply-date: #FF3D9A;
+  --reply-plus: #FF4F8B;
+  --reply-minus: #4FA8FF;
+  --reply-result: #E879F9;
+  --reply-key: #C9A2FF;
+  --reply-ask: #FFC857;
+  --reply-red: #FF2E5D;
+  --reply-blocked: #FF9A3C;
+  --reply-adjust: #B8F25C;
+  --reply-code: #DD0E9F;
+  --reply-label: #E879F9;
+  --reply-old: #BF9BDF;
+  --reply-new: #3CD6C9;
+  --reply-step-label: #FFFFFF;
+  --reply-step-number: #FF3D9A;
+  --reply-step-rest: #BF9BDF;
+  --reply-option: #FFFFFF;
+  color: var(--text);
+  font-family: 'Sometype Mono', monospace;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 25px;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 10px;
+  overflow-wrap: anywhere;
+  user-select: text;
+  contain: inline-size;
+}
+
+#view .reply :where(div, p, h1, h2, h3, h4, h5, h6, figure, blockquote, pre) { margin: 0; padding: 0; }
+#view .reply .reply-line { min-height: 25px; white-space: pre-wrap; }
+
+#view .reply .reply-spaced { margin-top: var(--reply-gap); }
+/* Wrapped marker lines hang under their text, never back under the marker. */
+#view .reply .reply-hang { padding-left: var(--reply-hang, 2ch); text-indent: calc(-1 * var(--reply-hang, 2ch)); }
+#view .reply .reply-hang > .reply-marker { display: inline-block; min-width: calc(var(--reply-hang, 2ch) - 1ch); text-indent: 0; }
+/* The heavy gray start line where a reply begins after tool rows (palette.start). */
+#view .reply .reply-start-line { border: 0; height: 2px; background: var(--reply-start); margin: 0 0 var(--reply-gap); }
+#view .reply.reply-after-work { border-top: 2px solid var(--reply-start); margin-top: 10px; padding-top: 14px; }
+#view .reply:has(> .reply-start-line:first-child) { border-top: 0; margin-top: 0; padding-top: 0; }
+#view .reply .reply-heading {
+  color: var(--bright);
+  font-family: 'Sometype Mono', monospace;
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 26px;
+  margin: 18px 0 8px;
+  white-space: pre-wrap;
+}
+/* The 1.3x title is centered in its own row and spills into the blank rows around it (marks.js). */
+#view .reply .reply-title { font-size: 20.8px; line-height: 32px; margin: 12px 0 14px; letter-spacing: -.3px; }
+#view .reply h1.reply-heading { text-decoration: underline; text-underline-offset: 4px; }
+#view .reply .reply-heading:first-child { margin-top: 8px; }
+#view .reply .reply-heading + .reply-spaced { margin-top: 0; }
+#view .reply .reply-option { color: var(--reply-option); font-weight: 700; }
+/* Crucial is red only: the terminal never bolds it (bold stays the title's own). */
+#view .reply strong { color: var(--reply-red); font-weight: inherit; }
+/* The newest reply's red phrases glow while the window is focused. */
+:root.r7-window-focused #view .reply.reply-latest strong:not(.reply-heading *) { animation: reply-red-glow 3s ease-in-out infinite; }
+@keyframes reply-red-glow {
+  0%, 100% { color: #E0284F; text-shadow: 0 0 0 transparent; }
+  50% { color: #FF6A88; text-shadow: 0 0 10px rgba(255, 30, 85, .75); }
+}
+#view .reply .reply-heading strong { color: inherit; }
+/* A time or name inside a red phrase takes the red too, so the phrase reads as one. */
+#view .reply strong :is(code, .reply-link, .reply-money, .reply-time, .reply-date) { color: inherit; }
+#view .reply em { font-style: italic; }
+#view .reply .reply-marker { font-weight: 400; }
+#view .reply .reply-done > .reply-marker { color: var(--reply-result); }
+#view .reply .reply-action > .reply-marker { color: #FF3D9A; }
+#view .reply .reply-key > .reply-marker { color: var(--reply-key); }
+#view .reply .reply-blocked > .reply-marker { color: var(--reply-blocked); }
+#view .reply .reply-plus > .reply-marker { color: var(--reply-plus); }
+#view .reply .reply-minus > .reply-marker { color: var(--reply-minus); }
+#view .reply .reply-question > .reply-marker { color: var(--reply-ask); }
+#view .reply .reply-question { cursor: pointer; position: relative; }
+/* Hover draws a gold line in under the question, from the left. */
+#view .reply .reply-question::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 1px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, var(--reply-ask), transparent 85%);
+  transform: scaleX(0); transform-origin: left; opacity: 0; transition: transform 300ms ease-out, opacity 220ms ease-out;
+}
+#view .reply .reply-question:hover::after { transform: scaleX(1); opacity: .8; }
+#view .reply .reply-question:focus-visible { outline: 1px solid var(--reply-ask); outline-offset: 2px; }
+#view .reply .reply-group-label,
+#view .reply .reply-done > .reply-item-label { color: var(--reply-label); font-weight: 700; }
+#view .reply .reply-stepped { color: var(--reply-step-rest); }
+#view .reply .reply-stepped > .reply-marker { color: var(--text); }
+#view .reply .reply-stepped > .reply-item-label { color: var(--reply-step-label); }
+#view .reply .reply-adjust-label { color: var(--reply-adjust); }
+#view .reply .reply-new { color: var(--reply-new); }
+#view .reply .reply-old { color: var(--reply-old); }
+#view .reply .reply-list { padding-left: calc(var(--reply-indent, 0ch) + 3ch); text-indent: -3ch; }
+#view .reply .reply-list > .reply-marker { display: inline-block; min-width: 2ch; text-indent: 0; }
+#view .reply .reply-bullet > .reply-marker { color: var(--accent); }
+#view .reply .reply-numbered > .reply-marker { color: var(--reply-step-number); font-weight: 700; }
+/* Hovering a numbered step tints its row and turns the number white. */
+#view .reply .reply-numbered { border-radius: 3px; transition: background-color 220ms ease-out; }
+#view .reply .reply-numbered:hover { background: color-mix(in srgb, var(--reply-result) 9%, transparent); }
+#view .reply .reply-numbered:hover > .reply-marker { color: #fff; }
+#view .reply code { font: inherit; color: var(--reply-code); background: none; padding: 0; }
+#view .reply .reply-money { color: var(--reply-money); }
+#view .reply .reply-time { color: var(--reply-time); }
+#view .reply .reply-date { color: var(--reply-date); }
+#view .reply .reply-link { color: var(--link); text-decoration: none; cursor: text; }
+/* Titled text links read as links without Ctrl: underline plus a small arrow (hover/click unchanged). */
+#view .reply .reply-link:not(.reply-bare) { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; transition: text-decoration-thickness 220ms ease-out, text-underline-offset 220ms ease-out; }
+#view .reply .reply-link:not(.reply-bare):hover { text-decoration-thickness: 2px; text-underline-offset: 5px; }
+#view .reply .reply-link:not(.reply-bare)::after { content: ' ↗'; font-size: .85em; }
+/* A path written in plain prose keeps the text colour; only titled links wear the link colour. */
+#view .reply .reply-link.reply-bare { color: inherit; }
+#view .reply code > .reply-link { color: inherit; }
+#view .reply .reply-link:hover { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+#view .reply .reply-quote {
+  margin: var(--reply-gap) 0;
+  padding-left: 1.5ch;
+  border-left: 2px solid var(--subtle);
+  font-style: italic;
+  color: var(--muted);
+  white-space: pre-wrap;
+  cursor: text;
+}
+#view .reply .reply-quote-line { min-height: 22px; }
+#view .reply .reply-quote :where(code, .reply-link) { font-style: inherit; }
+#view.ctrl-held .reply .reply-quote:hover { cursor: copy; border-color: var(--accent); }
+#view .reply .reply-pre {
+  margin: var(--reply-gap) 0;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-left: 2px solid var(--subtle);
+  font: inherit;
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+#view .reply .reply-pre code { color: var(--muted); }
+#view .reply .reply-rule { border: 0; height: 1px; background: var(--subtle); margin: var(--reply-gap) 0; max-width: 80ch; }
+
+#view .reply .reply-table-wrap { max-width: calc(100% - 1ch); width: fit-content; margin: var(--reply-gap) 0 var(--reply-gap) 1ch; min-width: 0; }
+/* Arrival (reply.js): a key-colour rule traces the divider once; at rest it is invisible. */
+#view .reply .reply-table-wrap { position: relative; }
+#view .reply .reply-table-wrap::after { content: ''; position: absolute; top: 0; bottom: 0; left: var(--split-x, 0); width: 1px; background: var(--reply-key); transform-origin: top; opacity: 0; pointer-events: none; }
+#view .reply .reply-table {
+  border: 0;
+  border-collapse: collapse;
+  border-spacing: 0;
+  color: var(--text);
+  font-family: 'Overpass Mono', monospace;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 28px;
+  letter-spacing: -.2px;
+  max-width: 100%;
+  table-layout: auto;
+}
+#view .reply .reply-table :where(th, td) { border: 0; padding: 0 1.1ch; font-weight: 400; vertical-align: top; text-align: left; overflow-wrap: break-word; word-break: normal; }
+#view .reply .reply-table th { font-size: .78em; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+/* Cells wrap between words only; short and number columns never wrap (reply.js), like the terminal. */
+#view .reply .reply-table .reply-table-short { white-space: nowrap; }
+#view .reply .reply-table :where(th, td) + :where(th, td) { padding-left: 1.1ch; }
+#view .reply .reply-table-header,
+#view .reply .reply-table-dim .reply-table-header { color: var(--dim); }
+#view .reply .reply-table-label { color: var(--bright); }
+#view .reply .reply-table-rule thead { border-bottom: 1px solid var(--subtle); }
+#view .reply .reply-table-wrapped tbody > tr:nth-child(even) { background: var(--user); }
+#view .reply .reply-table-split { border-right: 1px solid var(--subtle); }
+#view .reply .reply-table-hot :where(code, .reply-link) { color: inherit; }
+/* full/half only add room, like the terminal: a table that needs more than half still gets it. */
+#view .reply .reply-table-full { width: calc(100% - 1ch); }
+#view .reply .reply-table-half { min-width: calc((100% - 2ch) / 2); }
+#view .reply :where(.reply-table-full, .reply-table-half) > table { width: 100%; }
+/* Stretched tables give the extra width to the bar, else to the first column, like the terminal. */
+#view .reply :where(.reply-table-full, .reply-table-half) :where(th, td).reply-table-num,
+#view .reply :where(.reply-table-full, .reply-table-half) :where(th, td).reply-table-fit { width: 1%; white-space: nowrap; }
+#view .reply :where(.reply-table-full, .reply-table-half) :where(th, td).reply-table-bars { width: 100%; }
+#view .reply .reply-tables { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 4ch; margin: var(--reply-gap) 0 var(--reply-gap) 1ch; }
+#view .reply .reply-tables > .reply-table-wrap { flex: 0 1 auto; margin: 0; max-width: 100%; }
+#view .reply .reply-tables > .reply-table-half { min-width: calc((100% - 5ch) / 2); }
+#view .reply .reply-bar {
+  display: inline-block;
+  width: var(--reply-bar-width, 12ch);
+  max-width: 18vw;
+  /* Nearly the full row, like the terminal's block bars: stacked rows read as one chart. */
+  height: calc(1lh - 4px);
+  margin-left: 1ch;
+  background:
+    linear-gradient(to right, var(--reply-bar-color, var(--accent)) var(--reply-bar-fill, 0%), transparent var(--reply-bar-fill, 0%)),
+    repeating-linear-gradient(to right, color-mix(in srgb, var(--subtle) 70%, transparent) 0 2px, transparent 2px 4px);
+  vertical-align: top;
+  margin-top: 2px;
+}
+#view .reply .reply-bar-empty { visibility: hidden; }
+/* Bars ease to a new value (more rows arriving rescale them) and grow in when built live. */
+@property --reply-bar-fill { syntax: '<percentage>'; inherits: true; initial-value: 0%; }
+#view .reply .reply-bar { transition: --reply-bar-fill 400ms ease-out; }
+#view .reply .reply-bar-grow { animation: reply-bar-grow 420ms cubic-bezier(.2, .8, .2, 1) backwards; }
+@keyframes reply-bar-grow { from { --reply-bar-fill: 0%; } }
+/* Hovering a row lifts it so the eye can follow it across; its label brightens. */
+#view .reply .reply-table tbody tr:hover > td { box-shadow: inset 0 0 0 100vmax color-mix(in srgb, var(--accent) 9%, transparent); }
+#view .reply .reply-table tbody tr:hover > td.reply-table-label { color: var(--accent); }
+/* Values stand in a right-aligned column so every bar starts at the same x. */
+#view .reply .reply-table-bars { white-space: nowrap; text-align: left; }
+#view .reply .reply-bar-value { display: inline-block; text-align: right; }
+#view .reply :where(.reply-table-full, .reply-table-half) .reply-bar {
+  width: calc(100% - var(--reply-value-width, 0ch) - 1ch);
+  min-width: var(--reply-bar-width, 12ch);
+  max-width: none;
+}
+
+/* Pictures: at most 72 columns by 18 rows (396px), never upscaled; reply.js sizes them to whole
+   device pixels so they stay crisp at any devicePixelRatio and page zoom. */
+#view .reply .reply-picture { margin: var(--reply-gap) 0; max-width: 72ch; }
+/* Arrival (reply.js): one soft light pass over the image, sized by --sheen-* while it plays; invisible at rest. */
+#view .reply .reply-picture { position: relative; }
+#view .reply .reply-picture::after {
+  content: '';
+  position: absolute;
+  left: var(--sheen-x, 0);
+  top: var(--sheen-y, 0);
+  width: var(--sheen-w, 0);
+  height: var(--sheen-h, 0);
+  border-radius: 10px;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .2) 50%, transparent 65%) 130% 0 / 260% 100% no-repeat;
+}
+#view .reply .reply-picture-image {
+  display: block;
+  /* reply.js sets --pw/--ph (natural pixels) and --ps (device pixels per CSS pixel). Unset until the picture loads: then plain auto. */
+  width: min(calc(var(--pw) / var(--ps) * 1px), 100%, calc(396px * var(--pw) / var(--ph)));
+  height: auto;
+  max-width: 100%;
+  max-height: 396px;
+  object-fit: contain;
+  object-position: left center;
+  border-radius: 10px;
+  margin-top: 3px;
+  cursor: pointer;
+}
+/* Pictures shine once on arrival and show a steady outline on hover. */
+#view .reply .reply-picture-image { transition: box-shadow 220ms ease-out; }
+#view .reply .reply-picture-image:hover { outline: none; box-shadow: 0 0 0 2px var(--accent), 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  #view .reply strong { animation: none !important; }
+  #view .reply :is(.reply-picture-image, .reply-link, .reply-numbered) { transition: none; }
+  #view .reply .reply-question::after { transition: none; }
+}
+#view .reply .reply-picture-caption,
+#view .reply .reply-image-caption { color: var(--muted); }
+/* Caption sits right under the picture, italic like every quoted line. */
+#view .reply .reply-picture-caption { margin-top: 4px; min-height: 22px; font-style: italic; }
+/* A picture that cannot load leaves its caption alone, as other terminals show it. */
+#view .reply .reply-picture-error { display: none; }
+
+@media (max-width: 600px) {
+  #view .reply .reply-table-wrap,
+  #view .reply .reply-tables { margin-left: 1ch; max-width: calc(100% - 1ch); }
+  #view .reply .reply-table-half,
+  #view .reply .reply-table-full { width: calc(100% - 1ch); }
+  #view .reply .reply-tables { gap: 8px; }
+  #view .reply .reply-tables > .reply-table-wrap { flex-basis: 100%; width: 100%; }
+  #view .reply .reply-table :where(th, td) { padding-right: .5ch; padding-left: .5ch; }
+  #view .reply .reply-table :where(th, td) + :where(th, td) { padding-left: 1ch; }
+}

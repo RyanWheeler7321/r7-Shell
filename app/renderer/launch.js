@@ -16,6 +16,7 @@ const launch = (() => {
   let near = -1;
   let origin = { x: 0, y: 0 };
   let expected = 3000;
+  let band = 0; // first row the water may use: 0 for a launch, the input box's top row for a refresh
 
   // The theme's blue slot is its accent: a lighter tint of it on the surface, the accent
   // itself below, and a darker shade going deeper.
@@ -30,20 +31,24 @@ const launch = (() => {
     return { surface: mix(accent, '#ffffff', 0.35), shallow: accent, deep: mix(accent, bg, 0.45) };
   }
 
-  // `kind` keeps a separate pace, so a refresh (the program restarting in place) has its own.
-  function start(kind = '') {
+  // Keep a separate launch pace for in-place refreshes.
+  // `fromRow`: a refresh keeps the chat on screen (input.js holds a still of it) and only
+  // the input box fills with water, so the canvas sits above that still.
+  function start(kind = '', fromRow = 0) {
     remove();
+    band = Math.max(0, Math.min(fromRow, term.rows - 1));
     key = `r7.bootMs.${cfg.template}${kind ? `.${kind}` : ''}`;
-    expected = Number(localStorage.getItem(key)) || 3000;
+    expected = Number(savedValues.getItem(key)) || 3000;
     endedAt = 0;
     near = -1;
     level = 0;
     canvas = document.createElement('canvas');
     canvas.id = 'launch';
+    if (band) canvas.style.zIndex = '21';
     screenEl.appendChild(canvas);
     ctx = canvas.getContext('2d');
     startedAt = performance.now();
-    frame = requestAnimationFrame(draw);
+    if (!document.hidden) frame = requestAnimationFrame(draw);
   }
 
   // `box` is the input box's top row, so the ripple starts there.
@@ -54,15 +59,18 @@ const launch = (() => {
     endedAt = performance.now();
     const boot = endedAt - startedAt;
     // Next time's pace: mostly the last boot, a little of the ones before.
-    if (ready) localStorage.setItem(key, String(Math.round(expected * 0.3 + boot * 0.7)));
+    if (ready) savedValues.setItem(key, String(Math.round(expected * 0.3 + boot * 0.7)));
     origin = { x: 4, y: box ? box + 1 : 3 };
     r7.log('info', 'launch.done', { session: cfg.session, bootMs: Math.round(boot), key });
+    if (document.hidden) remove();
   }
 
   function remove() {
     cancelAnimationFrame(frame);
+    frame = 0;
     canvas?.remove();
     canvas = null;
+    ctx = null;
   }
 
   // A cheap smooth noise from a few sines, for the water's shimmer.
@@ -79,7 +87,10 @@ const launch = (() => {
   }
 
   function draw() {
+    frame = 0;
+    if (!canvas || document.hidden) return;
     const now = performance.now();
+    if (endedAt && now - endedAt >= FINISH_MS) { remove(); return; }
     const t = (now - startedAt) / 1000;
     const dpr = window.devicePixelRatio || 1;
     const w = screenEl.clientWidth;
@@ -105,10 +116,13 @@ const launch = (() => {
     const loading = rise((endedAt || now) - startedAt);
     const done = endedAt ? Math.min(1, (now - endedAt) / FINISH_MS) : 0;
     level = endedAt ? Math.min(1, loading + Math.max(rate, (1 - loading) / 300) * (now - endedAt)) : loading;
+    // In the input box the water stays low and calm, so its surface never meets the box's top edge.
+    if (band) level = Math.min(level, 0.55);
     // The ripple clears the same amount of water every frame: it starts at the water's
     // surface, its area grows linearly, and it reaches the far corner as it ends.
-    const reach = Math.hypot(Math.max(origin.x, cols - origin.x), Math.max(origin.y, rows - origin.y) * 2.2) + 4;
-    if (endedAt && near < 0) near = Math.min(reach, Math.max(0, rows * (1 - level) - 2 - origin.y) * 2.2);
+    const span = rows - band;
+    const reach = Math.hypot(Math.max(origin.x, cols - origin.x), Math.max(origin.y - band, rows - origin.y) * 2.2) + 4;
+    if (endedAt && near < 0) near = Math.min(reach, Math.max(0, band + span * (1 - level) - 2 - origin.y) * 2.2);
     const radius = endedAt ? Math.sqrt(near * near + done * (reach * reach - near * near)) : -1;
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -116,7 +130,10 @@ const launch = (() => {
     ctx.globalCompositeOperation = 'source-over';
     // The screen stays covered, except inside the ripple once the program is ready.
     ctx.fillStyle = colors.bg;
-    ctx.fillRect(0, 0, w, h);
+    // A refresh covers from a little above the box's top row: its task title is drawn larger
+    // than a row and reaches up past it.
+    const fillTop = band ? Math.max(0, band - 0.6) * ch : 0;
+    ctx.fillRect(0, fillTop, w, h - fillTop);
     const ox = (origin.x + 0.5) * cw;
     const oy = (origin.y + 0.5) * ch;
     if (radius > 0) {
@@ -132,8 +149,8 @@ const launch = (() => {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     const tone = tones();
-    const amp = 1.1;
-    const base = rows * (1 - level);
+    const amp = band ? 0.45 : 1.1;
+    const base = band + span * (1 - level);
     const surf = new Float32Array(cols);
     let top = rows;
     for (let x = 0; x < cols; x++) {
@@ -141,7 +158,7 @@ const launch = (() => {
       top = Math.min(top, Math.ceil(surf[x]));
     }
     const ring = [];
-    for (let y = Math.max(0, top); y < rows; y++) {
+    for (let y = Math.max(band, top); y < rows; y++) {
       let line = '';
       for (let x = 0; x < cols; x++) {
         let glyph = y < Math.ceil(surf[x]) ? ' ' : swell(x, y, t);
@@ -154,7 +171,7 @@ const launch = (() => {
         }
         line += glyph;
       }
-      const depth = (y - base) / rows;
+      const depth = (y - base) / Math.max(span, 8);
       ctx.globalAlpha = Math.max(0.15, 0.9 - depth * 1.4);
       ctx.fillStyle = depth < 0.12 ? tone.shallow : tone.deep;
       ctx.fillText(line, 0, (y + 0.5) * ch);
@@ -166,7 +183,7 @@ const launch = (() => {
     ctx.globalAlpha = 1;
     for (let x = 0; x < cols; x++) {
       const sy = surf[x] - 0.5;
-      if (sy <= -1 || Math.hypot(x - origin.x, (sy - origin.y) * 2.2) < radius) continue;
+      if (sy <= band - 1 || Math.hypot(x - origin.x, (sy - origin.y) * 2.2) < radius) continue;
       ctx.fillText('~', (x + 0.5) * cw, (sy + 0.5) * ch);
     }
     for (const c of ring) {
@@ -177,6 +194,16 @@ const launch = (() => {
     if (endedAt && done >= 1) { remove(); return; }
     frame = requestAnimationFrame(draw);
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (endedAt) remove();
+    } else if (canvas && !frame) {
+      frame = requestAnimationFrame(draw);
+    }
+  });
 
   return { start, end };
 })();

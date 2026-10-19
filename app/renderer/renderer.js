@@ -33,6 +33,8 @@ const term = new Terminal({
   allowProposedApi: true,
   drawBoldTextInBrightColors: false,
   minimumContrastRatio: 1,
+  // OSC 8 links open on a plain click.
+  linkHandler: { activate: (_e, uri) => r7.openExternal(uri) },
 });
 
 const fit = new FitAddon.FitAddon();
@@ -41,13 +43,86 @@ const unicode = new Unicode11Addon.Unicode11Addon();
 term.loadAddon(unicode);
 term.unicode.activeVersion = '11';
 
-// A plain click opens links (dragging still selects).
+// Web links and file paths open on a plain click.
+const hoveredLinks = new Set();
+// Titled links show their address beside the pointer.
+const linkTip = document.createElement('div');
+linkTip.id = 'link-tip';
+document.body.appendChild(linkTip);
+let pointer = { x: 0, y: 0 };
+function placeTip() {
+  const r = linkTip.getBoundingClientRect();
+  const x = Math.min(pointer.x + 14, innerWidth - r.width - 6);
+  const y = pointer.y + 20 + r.height > innerHeight ? pointer.y - r.height - 10 : pointer.y + 20;
+  linkTip.style.transform = `translate(${Math.max(6, x)}px, ${Math.max(6, y)}px)`;
+}
+function showLinks() {
+  let tip = '';
+  for (const link of hoveredLinks) {
+    link.decorations.underline = true;
+    link.decorations.pointerCursor = true;
+    if (link.tip) tip = link.tip;
+  }
+  const on = !!tip;
+  if (on && linkTip.textContent !== tip) linkTip.textContent = tip;
+  linkTip.classList.toggle('on', on);
+  if (on) placeTip();
+}
+function linkText(range) {
+  let text = '';
+  for (let y = range.start.y; y <= range.end.y; y++) {
+    const line = term.buffer.active.getLine(y - 1);
+    if (!line) break;
+    const from = y === range.start.y ? range.start.x - 1 : 0;
+    const to = y === range.end.y ? range.end.x : term.cols;
+    text += line.translateToString(false, from, to);
+  }
+  return text.trim();
+}
+function decorateLinks(provider, withTip = false) {
+  return {
+    provideLinks(y, callback) {
+      provider.provideLinks(y, (links) => callback(links && links.map((link) => {
+        const gated = {
+          ...link,
+          decorations: { underline: true, pointerCursor: true },
+          tip: withTip && linkText(link.range) !== link.text ? link.text : '',
+          activate: (e, text) => link.activate(e, text),
+          hover: (e, text) => { link.hover?.(e, text); hoveredLinks.add(gated); queueMicrotask(showLinks); },
+          leave: (e, text) => { link.leave?.(e, text); hoveredLinks.delete(gated); showLinks(); },
+        };
+        return gated;
+      })));
+    },
+  };
+}
+window.addEventListener('mousemove', (e) => {
+  pointer = { x: e.clientX, y: e.clientY };
+  if (linkTip.classList.contains('on')) placeTip();
+}, true);
+// xterm doesn't always send `leave` when a hovered link scrolls away; drop the tip then.
+function dropTip() {
+  for (const link of hoveredLinks) if (link.tip) hoveredLinks.delete(link);
+  linkTip.classList.remove('on');
+}
+term.onScroll(dropTip);
+window.addEventListener('wheel', dropTip, true);
+
+const registerLinks = term.registerLinkProvider.bind(term);
+term.registerLinkProvider = (provider) => registerLinks(decorateLinks(provider));
 term.loadAddon(new WebLinksAddon.WebLinksAddon((_e, url) => r7.openExternal(url)));
+term.registerLinkProvider = registerLinks;
 const search = new SearchAddon.SearchAddon();
 term.loadAddon(search);
 const images = new ImageAddon.ImageAddon();
 term.loadAddon(images);
 term.open(document.getElementById('term'));
+// Add address tips to xterm's OSC 8 provider.
+{
+  const providers = term._core._linkProviderService?.linkProviders;
+  if (providers?.[0] && providers[0]._oscLinkService) providers[0] = decorateLinks(providers[0], true);
+  else r7.log('warn', 'links.osc-unwrapped', { session: cfg.session });
+}
 
 let renderer = 'dom';
 function loadWebgl() {
@@ -66,7 +141,31 @@ function loadWebgl() {
   }
 }
 if (cfg.gpu) loadWebgl();
-fit.fit();
+
+// Rows stand on the bottom edge: the part of a row that won't fit goes above the first
+// row instead of under the last, so the input box sits at the same height in every
+// window, with or without the top panel. BOTTOM_GAP is the room left under the last row.
+const BOTTOM_GAP = 3;
+const termEl = document.getElementById('term');
+function fitRows() {
+  const cellH = term._core?._renderService?.dimensions?.css?.cell?.height;
+  if (cellH) {
+    const room = window.innerHeight - 2 * (cfg.padding ?? 18) - BOTTOM_GAP;
+    const spare = Math.max(0, room - Math.floor(room / cellH) * cellH);
+    const dpr = window.devicePixelRatio || 1;
+    termEl.style.setProperty('--r7-spare', `${Math.floor(spare * dpr) / dpr}px`);
+  }
+  fit.fit();
+  // The grid is whole columns, so some width is always left over; split it between both sides
+  // so the input box has the same margin left and right. Moving both edges keeps the width, so the fit holds.
+  const cellW = term._core?._renderService?.dimensions?.css?.cell?.width;
+  if (cellW) {
+    const dpr = window.devicePixelRatio || 1;
+    const spareX = Math.max(0, termEl.clientWidth - term.cols * cellW) / 2;
+    termEl.style.setProperty('--r7-spare-x', `${Math.floor(spareX * dpr) / dpr}px`);
+  }
+}
+fitRows();
 
 // ---- connection ---------------------------------------------------------------
 
@@ -75,6 +174,31 @@ let ws = null;
 let retryMs = 250;
 let exited = false;
 let snapshotHeader = null;
+let chromeRows = null;
+
+term.parser.registerOscHandler(7321, (data) => {
+  if (data === 'clear') {
+    resetScroll();
+    followBottom = true;
+    term.clearSelection();
+    term.scrollToBottom();
+    hoveredLinks.clear();
+    dropTip();
+    window.dispatchEvent(new Event('r7-clear'));
+    term.refresh(0, term.rows - 1);
+    r7.log('info', 'view.clear', { session: cfg.session });
+    return true;
+  }
+  if (!data.startsWith('chrome;')) return false;
+  const value = data.slice(7);
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    r7.log('error', 'view.chrome', { session: cfg.session, error: 'invalid row count' });
+    return true;
+  }
+  chromeRows = Math.min(500, Number(value));
+  window.dispatchEvent(new CustomEvent('r7-view-chrome', { detail: { rows: chromeRows } }));
+  return true;
+});
 
 function status(text) {
   statusEl.hidden = !text;
@@ -95,6 +219,8 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'snapshot') {
       snapshotHeader = msg;
+    } else if (msg.type === 'view') {
+      window.dispatchEvent(new CustomEvent('r7-view-events', { detail: msg }));
     } else if (msg.type === 'title') {
       setTitle(msg.title);
     } else if (msg.type === 'exit') {
@@ -117,6 +243,7 @@ function applySnapshot(msg, data) {
   held = [];
   heldBytes = 0;
   term.reset();
+  chromeRows = null;
   resetColors();
   resetScroll();
   if (msg.cols !== term.cols || msg.rows !== term.rows) sendJson({ type: 'resize', cols: term.cols, rows: term.rows });
@@ -128,7 +255,7 @@ function applySnapshot(msg, data) {
   // A snapshot keeps text and colors but not r7-Harness's title marks or pictures. It
   // reprints its whole transcript on a width change, so one narrow-and-back brings them back.
   term.write('', () => {
-    if (exited || !harness.on) return;
+    if (exited || !harness.on || window.r7View?.active) return;
     sendJson({ type: 'resize', cols: term.cols - 1, rows: term.rows });
     setTimeout(() => sendJson({ type: 'resize', cols: term.cols, rows: term.rows }), 150);
   });
@@ -142,6 +269,9 @@ const snapshotListeners = [];
 // which some agents do on every resize. Leaving the bottom is logged (`scroll.leave`
 // with what did it); getting pulled off it any other way is put back after the
 // next frame and logged as `scroll.rejoin`.
+// Keep launch pace and model chips in the main process across browser profiles.
+const savedValues = r7.store || localStorage;
+
 let followBottom = true;
 function leaveBottom(why) {
   if (!followBottom) return;
@@ -149,8 +279,10 @@ function leaveBottom(why) {
   r7.log('info', 'scroll.leave', { session: cfg.session, why });
 }
 function writeOutput(data) {
+  // Theme effects may handle a palette chunk, but submit its bytes immediately.
+  if (window.r7ThemeFx?.take(data)) return;
   // Held output still waiting to be written keeps new output behind it, in order.
-  if (document.hidden || heldBytes) { hold(data); return; }
+  if (document.hidden || heldBytes) { hold(data); if (document.hidden) parseHidden(); return; }
   term.write(data, keepBottom);
 }
 function keepBottom() {
@@ -158,12 +290,50 @@ function keepBottom() {
   if (followBottom && !scroll.frame && b.viewportY !== b.baseY) term.scrollToBottom();
 }
 
-// A minimized or covered window holds its output and writes it in one go when it shows
-// again. Chromium slows a hidden window's timers to one a second (one a minute after 5
-// minutes), and xterm parses output on timers, so it fell minutes behind and replayed
-// them on restore. While the held output is parsed, `catchingUp` tells fade.js to skip
-// fading and gliding it. Past HOLD_MAX the window takes a fresh copy of the screen instead.
+// A minimized or covered window holds its output. Chromium slows a hidden window's timers
+// to one a second (one a minute after 5 minutes), and xterm parses output on timers, so
+// it fell minutes behind and replayed them on restore. So a hidden window parses what it
+// held itself, at most every HIDDEN_PARSE_MS as output arrives (`parseHidden`, run from
+// the socket's message, which isn't throttled), and draws nothing until it shows: showing
+// it then only parses the last moment's output. Waiting until the show instead took
+// 0.7-1.2s for 1-2MB after a few minutes of an agent working, with the old screen up.
+// Whatever is still held on show is written then; `catchingUp` tells fade.js to skip
+// fading and gliding it, and the first frame after a show (everything that changed while
+// hidden). Past HOLD_MAX the window takes a fresh copy of the screen instead. A large
+// catch-up blocks the page, so a window revealed by Alt+CapsLock plays its pulse (glow.js)
+// first and catches up when the pulse ends; parsing at once ate the pulse's first frames.
 const HOLD_MAX = 4 << 20;
+const HIDDEN_PARSE_MS = 300;
+const QUICK_CATCHUP = 32 << 10;
+let hiddenParsedAt = 0;
+let hiddenParseTimer = 0;
+let shownQuiet = false;
+function parseHidden() {
+  const now = performance.now();
+  if (heldBytes > HOLD_MAX || !document.hidden || !heldBytes) return;
+  // The rest of a burst is parsed by a timer (about a second late while hidden: a single
+  // timer, not a chain, so it never drops to one a minute).
+  // So does output that arrives while xterm's own queue is busy (a picture decoding).
+  const queue = term._core?._writeBuffer;
+  if (!queue?.handleUserInput) return;
+  if (now - hiddenParsedAt < HIDDEN_PARSE_MS || queue._writeBuffer.length) {
+    if (!hiddenParseTimer) hiddenParseTimer = setTimeout(() => { hiddenParseTimer = 0; parseHidden(); }, HIDDEN_PARSE_MS);
+    return;
+  }
+  hiddenParsedAt = now;
+  const all = takeHeld();
+  // Marks the write as typed input, which xterm parses at once instead of on a timer.
+  queue.handleUserInput();
+  term.write(all, keepBottom);
+}
+function takeHeld() {
+  const all = new Uint8Array(heldBytes);
+  let at = 0;
+  for (const chunk of held) { all.set(chunk, at); at += chunk.length; }
+  held = [];
+  heldBytes = 0;
+  return all;
+}
 let held = [];
 let heldBytes = 0;
 let catchingUp = false;
@@ -176,8 +346,13 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   // A scroll animation can't run while hidden; one still under way jumps to its end.
   if (scroll.frame) { cancelAnimationFrame(scroll.frame); scroll.frame = 0; placeScroll(scroll.target); keepBottom(); }
+  // The first frame after a show is quiet; with nothing new to draw there is none.
+  shownQuiet = true;
+  const quietOff = term.onRender(() => { quietOff.dispose(); setTimeout(() => { shownQuiet = false; }); });
+  setTimeout(() => { quietOff.dispose(); shownQuiet = false; }, 200);
   if (!heldBytes) return;
   const shown = performance.now();
+  if (heldBytes <= QUICK_CATCHUP) return catchUp(shown);
   requestAnimationFrame(() => catchUp(shown));
 });
 function catchUp(shown) {
@@ -191,11 +366,7 @@ function catchUp(shown) {
     ws?.close();
     return;
   }
-  const all = new Uint8Array(bytes);
-  let at = 0;
-  for (const chunk of held) { all.set(chunk, at); at += chunk.length; }
-  held = [];
-  heldBytes = 0;
+  const all = takeHeld();
   catchingUp = true;
   term.write(all, () => {
     catchingUp = false;
@@ -273,7 +444,7 @@ let resizeFrame = 0;
 function refit() {
   resizeFrame = 0;
   const before = `${term.cols}x${term.rows}`;
-  fit.fit();
+  fitRows();
   if (`${term.cols}x${term.rows}` === before) return;
   // A resize clears the canvas and xterm redraws on the next frame, which flashes
   // black while dragging; draw now instead (private xterm internals, guarded).
@@ -305,14 +476,13 @@ function setFontSize(size) {
   if (size === fontPoints) return;
   fontPoints = size;
   term.options.fontSize = pointsToPx(size);
-  fit.fit();
+  fitRows();
   sendJson({ type: 'resize', cols: term.cols, rows: term.rows });
+  r7.log('info', 'font.size', { session: cfg.session, pt: size, cols: term.cols, rows: term.rows });
   r7.saveFontSize(cfg.template, size);
 }
 
-// Copied text drops the padding the screen adds: spaces at line ends and trailing blank
-// lines. Line breaks a program added to wrap a paragraph (r7-Harness wraps replies itself)
-// become spaces, so only real breaks survive a paste.
+// Copy paragraphs without terminal padding or soft line breaks.
 function selectedText() {
   const p = term.getSelectionPosition();
   // Alt+drag (column selection) copies the block as it looks.
@@ -351,9 +521,7 @@ function lastCol(line) {
   return -1;
 }
 
-// r7-Harness's input box on screen: its top and bottom border rows and its first and last
-// column, or null. A box narrower than the window can start past column 0; its text
-// starts 3 columns in, and the bottom border row carries text too.
+// Measure the harness input box, including centered columns and its bottom text row.
 function findBox() {
   const buf = term.buffer.active;
   if (buf.type !== 'normal' || buf.viewportY !== buf.baseY) return null;
@@ -373,7 +541,7 @@ function findBox() {
   return null;
 }
 
-// r7-Harness wraps its text one column short of its input box's width.
+// The harness wraps its text one column short of its input box's width.
 function inputBoxWidth() {
   const buf = term.buffer.active;
   for (let r = term.rows - 1; r >= 0; r--) {
@@ -412,8 +580,18 @@ function softBreak(prev, next, width) {
 async function paste() {
   const text = await r7.readClipboard();
   if (text) term.paste(text);
-  // No text (an image, say): pass Ctrl+V through like Windows Terminal, so the program can paste the image itself.
-  else sendInput('\x16');
+  // No text (an image, say): pass Ctrl+V through like Windows Terminal, so the program can paste
+  // the image itself. Save it first where the harness can read it directly.
+  else {
+    if (harness.on) {
+      try { await r7.clipboardImage(cfg.session); }
+      catch (error) {
+        r7.log('error', 'clipboard.image', { session: cfg.session, error: String(error) });
+        return;
+      }
+    }
+    sendInput('\x16');
+  }
 }
 
 // Dropping files types their paths, like Windows Terminal: WSL form, quoted when needed.
@@ -440,19 +618,34 @@ term.attachCustomKeyEventHandler((e) => {
   // preventDefault stops the browser's own paste as well, or text lands twice.
   if (ctrl && k === 'v') { e.preventDefault(); paste(); return false; }
   if (ctrl && e.key === 'Backspace') { sendInput('\x17'); return false; }
-  if (ctrl && (k === '=' || k === '+')) { setFontSize(fontPoints + 1); return false; }
-  if (ctrl && k === '-') { setFontSize(fontPoints - 1); return false; }
-  if (ctrl && k === '0') { setFontSize(cfg.font.defaultSize || cfg.font.size); return false; }
+  if (ctrl && (k === '=' || k === '+')) { zoomAt(1); return false; }
+  if (ctrl && k === '-') { zoomAt(-1); return false; }
+  if (ctrl && k === '0') { zoomAt(0); return false; }
   if (ctrl && e.shiftKey && k === 'n') { r7.newWindow(); return false; }
   if (ctrl && e.shiftKey && k === 'w') { r7.closeWindow(); return false; }
   if (ctrl && e.shiftKey && k === 'r') { location.reload(); return false; }
   if (ctrl && e.shiftKey && k === 'f') { openFind(); return false; }
+  if (ctrl && e.shiftKey && k === 'p') { sendInput('\x1b[112;6u'); return false; }
+  // Ctrl+Up answers the latest reply's next unanswered question, like clicking it (marks.js).
+  if (ctrl && !e.shiftKey && e.key === 'ArrowUp' && window.r7NextQuestion?.()) { e.preventDefault(); return false; }
+  // Shift+Enter sends Alt+Enter, a new line in the harness and Claude Code.
+  // preventDefault stops the keypress that would still send a plain Enter.
+  if (e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'Enter') {
+    e.preventDefault();
+    followBottom = true;
+    sendInput('\x1b\r');
+    return false;
+  }
+  if (e.key === 'F23') { zoomAt(1); return false; }
+  if (e.key === 'F24') { zoomAt(-1); return false; }
   if (e.altKey && e.shiftKey && !e.ctrlKey && k === 'd') { r7.newWindow(cfg.template); return false; }
-  if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && term.buffer.active.type === 'normal') {
+  // With the page drawn, these scroll the page (view/keys.js); the terminal only holds the chrome.
+  const paged = !!window.r7View?.active;
+  if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && term.buffer.active.type === 'normal' && !paged) {
     jumpMessage(e.key === 'ArrowUp' ? -1 : 1);
     return false;
   }
-  if (ctrl && e.shiftKey && term.buffer.active.type === 'normal') {
+  if (ctrl && e.shiftKey && term.buffer.active.type === 'normal' && !paged) {
     const rowsBy = { ArrowUp: -1, ArrowDown: 1, PageUp: -(term.rows - 1), PageDown: term.rows - 1 }[e.key];
     if (rowsBy) { scrollBy(rowsBy * rowHeight(), 'key'); return false; }
     if (e.key === 'Home') { scrollBy(-Infinity, 'key'); return false; }
@@ -462,15 +655,59 @@ term.attachCustomKeyEventHandler((e) => {
   return true;
 });
 
+// ---- zoom by place ---------------------------------------------------------------
+// Ctrl+wheel, Ctrl+= / Ctrl+- / Ctrl+0 and the mouse zoom keys (F23/F24) zoom what the pointer is
+// over: the page (transcript), the task title, or else the terminal itself (the bottom bar, its box
+// and the dock, which all follow the font size). Page and title zooms are saved per template.
+const zoomPointer = { x: -1, y: -1 };
+window.addEventListener('pointermove', (e) => { zoomPointer.x = e.clientX; zoomPointer.y = e.clientY; }, { passive: true, capture: true });
+const ZOOM_STEP = 1.1, ZOOM_MIN = 0.5, ZOOM_MAX = 3;
+const zooms = {
+  // Before page zoom was its own, the page followed the font; start from that look.
+  page: cfg.zoom?.page || Math.round(fontPoints / (cfg.font.defaultSize || cfg.font.size) * 100) / 100,
+  title: cfg.zoom?.title || 1,
+};
+window.r7Zoom = {
+  get: (kind) => zooms[kind],
+  titleExtra: 0,
+  step(kind, dir) {
+    const was = zooms[kind];
+    const next = dir ? Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, was * (dir > 0 ? ZOOM_STEP : 1 / ZOOM_STEP))) * 100) / 100 : 1;
+    if (next === was) return;
+    zooms[kind] = next;
+    r7.saveZoom(cfg.template, kind, next);
+    r7.log('info', 'zoom', { session: cfg.session, target: kind, from: was, to: next });
+    window.dispatchEvent(new CustomEvent('r7-zoom', { detail: { kind, value: next } }));
+  },
+};
+function zoomTarget(x, y) {
+  const over = (el) => {
+    if (!el || el.hidden || el.offsetParent === null) return false;
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+  };
+  if (over(document.querySelector('#r7-task-title .r7-task-line'))) return 'title';
+  if (window.r7View?.active && over(document.getElementById('view'))) return 'page';
+  return 'terminal';
+}
+function zoomAt(dir, x = zoomPointer.x, y = zoomPointer.y) {
+  const target = zoomTarget(x, y);
+  if (target !== 'terminal') return window.r7Zoom.step(target, dir);
+  setFontSize(dir ? fontPoints + dir : cfg.font.defaultSize || cfg.font.size);
+}
 document.addEventListener('wheel', (e) => {
   if (!e.ctrlKey) return;
   e.preventDefault();
-  setFontSize(fontPoints + (e.deltaY < 0 ? 1 : -1));
+  zoomAt(e.deltaY < 0 ? 1 : -1, e.clientX, e.clientY);
 }, { passive: false, capture: true });
 
-// Right-click copies the selection, or pastes when nothing is selected.
+// Right-click on a picture opens its menu (copy, save as, show in folder); elsewhere it
+// copies the selection, or pastes when nothing is selected.
 document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest?.('#view')) return;
   e.preventDefault();
+  const pic = pictureAt(e.clientX, e.clientY);
+  if (pic) { pic.menu(e.clientX, e.clientY); return; }
   if (term.hasSelection()) { r7.writeClipboard(selectedText()); term.clearSelection(); } else paste();
 });
 
@@ -491,15 +728,44 @@ function resetColors() {
   colors.palette = ANSI.map((name) => cfg.theme[name] || '#888');
   colors.cursor = cfg.theme.cursor || '';
   document.documentElement.style.setProperty('--bg', colors.bg);
+  colorsChanged();
 }
 
 // Other parts (the attention glow) redraw when the colors change.
 const colorListeners = [];
 let colorsQueued = false;
+let paletteQueued = false;
+function pageColors() {
+  const style = document.documentElement.style;
+  if (style.getPropertyValue('--bg') !== colors.bg) style.setProperty('--bg', colors.bg);
+  window.r7View?.flushTheme?.();
+}
+function flushPalette() {
+  if (!paletteQueued) return;
+  paletteQueued = false;
+  // Finish page colour writes before xterm measures its newly themed glyphs.
+  pageColors();
+  shownSelection = selectionColor();
+  setTheme(seeThroughSelection(shownSelection));
+}
+function applyTerminalPalette(t) {
+  colors.fg = t.foreground;
+  colors.bg = t.background;
+  colors.cursor = t.cursorColor;
+  colors.palette = ANSI.map((key) => t[key] || t[key === 'magenta' ? 'purple' : 'brightPurple']);
+  paletteQueued = true;
+  colorsChanged();
+  flushPalette();
+}
 function colorsChanged() {
   if (colorsQueued) return;
   colorsQueued = true;
-  queueMicrotask(() => { colorsQueued = false; for (const fn of colorListeners) fn(); });
+  queueMicrotask(() => {
+    colorsQueued = false;
+    pageColors();
+    flushPalette();
+    for (const fn of colorListeners) fn();
+  });
 }
 
 function parseColor(spec) {
@@ -513,38 +779,75 @@ function parseColor(spec) {
 
 term.parser.registerOscHandler(4, (data) => {
   const parts = data.split(';');
+  const complete = parts.length > 0 && parts.length % 2 === 0 && parts.every((part, i) =>
+    i % 2 ? !!parseColor(part) : /^\d+$/.test(part) && Number(part) < 16);
+  const batch = harness.on && complete;
+  if (!batch) flushPalette();
   for (let i = 0; i + 1 < parts.length; i += 2) {
     const c = parseColor(parts[i + 1]);
-    if (c && Number(parts[i]) < 16) colors.palette[Number(parts[i])] = c;
+    if (c && /^\d+$/.test(parts[i]) && Number(parts[i]) < 16) colors.palette[Number(parts[i])] = window.r7ThemeFx?.paletteColor?.(4, c, Number(parts[i])) || c;
   }
+  if (batch) paletteQueued = true;
   colorsChanged();
-  return false;
+  return batch;
 });
-term.parser.registerOscHandler(10, (data) => { const c = parseColor(data); if (c) colors.fg = c; return false; });
+term.parser.registerOscHandler(10, (data) => {
+  const c = parseColor(data);
+  const batch = harness.on && !!c;
+  if (!batch) flushPalette();
+  if (c) { colors.fg = window.r7ThemeFx?.paletteColor?.(10, c) || c; paletteQueued ||= batch; colorsChanged(); }
+  return batch;
+});
 // The cursor color goes to the page's cursor; xterm's own stays invisible.
 term.parser.registerOscHandler(12, (data) => {
   const c = parseColor(data);
   if (!c) return false;
-  colors.cursor = c;
+  colors.cursor = window.r7ThemeFx?.paletteColor?.(12, c) || c;
   colorsChanged();
   return true;
 });
 term.parser.registerOscHandler(112, () => { colors.cursor = cfg.theme.cursor || ''; colorsChanged(); return true; });
 term.parser.registerOscHandler(11, (data) => {
   const c = parseColor(data);
-  if (c) { colors.bg = c; document.documentElement.style.setProperty('--bg', c); }
+  const batch = harness.on && !!c;
+  if (!batch) flushPalette();
+  if (c) {
+    colors.bg = window.r7ThemeFx?.paletteColor?.(11, c) || c;
+    paletteQueued ||= batch;
+    if (!batch) document.documentElement.style.setProperty('--bg', c);
+    colorsChanged();
+  }
+  return batch;
+});
+// Resets put the template's colors back into the theme first: setTheme carries the
+// program's colors into it, and xterm's own reset goes back to the theme.
+term.parser.registerOscHandler(104, (data) => {
+  flushPalette();
+  const which = data ? data.split(';').map(Number) : null;
+  ANSI.forEach((name, i) => { if (!which || which.includes(i)) colors.palette[i] = cfg.theme[name] || '#888'; });
+  setTheme();
+  colorsChanged();
   return false;
 });
-term.parser.registerOscHandler(104, () => { colors.palette = ANSI.map((name) => cfg.theme[name] || '#888'); colorsChanged(); return false; });
-term.parser.registerOscHandler(110, () => { colors.fg = cfg.theme.foreground || '#fff'; return false; });
+term.parser.registerOscHandler(110, () => { flushPalette(); colors.fg = cfg.theme.foreground || '#fff'; setTheme(); colorsChanged(); return false; });
 term.parser.registerOscHandler(111, () => {
+  flushPalette();
   colors.bg = cfg.theme.background || '#000';
   document.documentElement.style.setProperty('--bg', colors.bg);
+  setTheme();
+  colorsChanged();
   return false;
 });
 resetColors();
 
-// Selections take the live accent (the cursor color a program sets with its theme), not the
+// Preserve the program's OSC colors while updating xterm's theme.
+function setTheme(extra = {}) {
+  const theme = { ...term.options.theme, ...extra, foreground: colors.fg, background: colors.bg };
+  ANSI.forEach((name, i) => { theme[name] = colors.palette[i]; });
+  if (Object.keys(theme).some((key) => theme[key] !== term.options.theme[key])) term.options.theme = theme;
+}
+
+// Selections take the live accent (the cursor color set by the program), not the
 // template's, so they match whichever theme is on.
 function selectionColor() {
   return /^#[0-9a-f]{6}$/i.test(colors.cursor) ? colors.cursor : cfg.theme.selectionBackground;
@@ -554,7 +857,7 @@ colorListeners.push(() => {
   const c = selectionColor();
   if (c === shownSelection) return;
   shownSelection = c;
-  term.options.theme = { ...term.options.theme, ...seeThroughSelection(c) };
+  setTheme(seeThroughSelection(c));
 });
 
 // ---- smooth scrolling -----------------------------------------------------------
@@ -576,17 +879,20 @@ const cellWidth = () => screenEl.clientWidth / term.cols;
 // ---- clicking a picture opens it in the viewer ---------------------------------
 // Reply pictures are page elements with a file path; tool screenshots are drawn by
 // the image addon, so those are saved from its canvas first. A drag still selects.
-// Hovering one shows the hand cursor and a softly breathing outline.
+// Hovering one shows the hand cursor and a steady outline.
 
 function windowsPath(p) {
+  if (/^[A-Za-z]:[\\/]/.test(p)) return p.replace(/\//g, '\\');
   const drive = /^\/mnt\/([a-z])\/(.*)$/i.exec(p);
   return drive ? `${drive[1].toUpperCase()}:\\${drive[2].replace(/\//g, '\\')}` : `\\\\wsl.localhost\\${cfg.distro}${p.replace(/\//g, '\\')}`;
 }
 
 // The picture under a point: its box on the screen element and how to open it.
+const replyPictures = document.getElementsByClassName('r7-image');
 function pictureAt(x, y) {
   const s = screenEl.getBoundingClientRect();
-  for (const img of document.querySelectorAll('.r7-image img')) {
+  // A live list: with no reply pictures on screen, a mouse move or render reads nothing here.
+  for (const img of replyPictures.length ? document.querySelectorAll('.r7-image img') : []) {
     const r = img.getBoundingClientRect();
     if (img.dataset.path && r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
       return {
@@ -595,6 +901,7 @@ function pictureAt(x, y) {
           r7.log('info', 'picture.open', { session: cfg.session, path: img.dataset.path });
           r7.openPath(windowsPath(img.dataset.path));
         },
+        menu: (mx, my) => r7.pictureMenu({ path: windowsPath(img.dataset.path) }, mx, my),
       };
     }
   }
@@ -610,6 +917,10 @@ function pictureAt(x, y) {
       if (!canvas) return;
       r7.log('info', 'picture.open', { session: cfg.session, drawn: `${canvas.width}x${canvas.height}` });
       r7.openImage(canvas.toDataURL('image/png'));
+    },
+    menu: (mx, my) => {
+      const canvas = images.getImageAtBufferCell(col, row);
+      if (canvas) r7.pictureMenu({ dataUrl: canvas.toDataURL('image/png') }, mx, my);
     },
   };
 }
@@ -681,13 +992,14 @@ function scrollBy(px, why = 'wheel') {
 }
 
 function stepScroll(now) {
+  if (document.hidden) { resetScroll(); return; }
   const dt = Math.min(50, now - scroll.last);
   scroll.last = now;
   const max = term.buffer.active.baseY * rowHeight();
   // Heading for the bottom aims at where the bottom is now, not where it was when the
   // scroll began: output that arrived meanwhile would otherwise strand the view above it.
   if (scroll.target > max || followBottom) scroll.target = max;
-  scroll.pos += (scroll.target - scroll.pos) * (1 - Math.exp(-dt / cfg.scrollEaseMs));
+  scroll.pos += (scroll.target - scroll.pos) * (1 - Math.exp(-dt / Math.max(1, cfg.scrollEaseMs ?? 45)));
   if (Math.abs(scroll.target - scroll.pos) < 0.5) scroll.pos = scroll.target;
   placeScroll(scroll.pos);
   scroll.frame = scroll.pos === scroll.target ? 0 : requestAnimationFrame(stepScroll);
@@ -700,7 +1012,7 @@ function placeScroll(pos) {
   let row = Math.floor(pos / h + 1e-6);
   let offset = Math.round((pos - row * h) * dpr) / dpr;
   if (offset >= h - 0.01) { row += 1; offset = 0; }
-  if (row === term.buffer.active.viewportY) { showScroll(row, offset); return; }
+  if (row === term.buffer.active.viewportY) { scroll.pending = null; showScroll(row, offset); return; }
   // The grid redraws on xterm's next frame; the shift waits for it so both move together.
   scroll.pending = { row, offset };
   scroll.row = row;
@@ -708,6 +1020,8 @@ function placeScroll(pos) {
 }
 
 function showScroll(row, offset) {
+  // No spare row may survive at the live bottom or leak into the bottom padding.
+  if (row >= term.buffer.active.baseY) offset = 0;
   scroll.row = row;
   scroll.shifted = offset > 0;
   screenEl.style.transform = offset ? `translateY(${-offset}px)` : '';
@@ -725,11 +1039,15 @@ function resetScroll() {
   scroll.shifted = false;
   screenEl.style.transform = '';
   extraRow.hidden = true;
+  extraRow.style.height = '0px';
+  scroll.extraKey = '';
 }
 
+document.addEventListener('visibilitychange', () => { if (document.hidden) resetScroll(); });
 term.onRender(() => {
   const p = scroll.pending;
   if (p && term.buffer.active.viewportY === p.row) { scroll.pending = null; showScroll(p.row, p.offset); }
+  else if (scroll.shifted && term.buffer.active.viewportY === scroll.row) drawExtraRow(scroll.row + term.rows);
 });
 // Scrolls that don't come from here (typing jumps to the bottom, new output) drop the shift.
 term.onScroll((y) => { if (y !== scroll.row) resetScroll(); });
@@ -829,7 +1147,8 @@ function messageRows() {
   const rows = [];
   let inside = false;
   for (let y = 0; y < buf.length; y++) {
-    const hit = messageStart.test(buf.getLine(y)?.translateToString(true, 0, 4) || '');
+    // Ignore the centered column's leading margin.
+    const hit = messageStart.test((buf.getLine(y)?.translateToString(true) || '').trimStart().slice(0, 4));
     if (hit && !inside) rows.push(y);
     inside = hit;
   }
@@ -847,7 +1166,7 @@ function jumpMessage(dir) {
 
 // ---- clickable file paths -----------------------------------------------------
 // Windows paths, WSL paths, ~/ and paths relative to the session's folder become
-// links when they exist (checked by the app, cached for a while); a click opens
+// links when they exist (checked by the app, cached for a while); Ctrl+click opens
 // them with their default app (pictures in the viewer), or Explorer for a folder.
 
 const PATH_RE = /(?:[A-Za-z]:\\[^\s"'`<>|*?]+|(?<![\w/.:~-])(?:~\/|\/)?[\w.@+-]+(?:\/[\w.@+-]+)+\/?)/g;
@@ -862,33 +1181,103 @@ function checkPath(text) {
   return win;
 }
 
-term.registerLinkProvider({
+// A row's text with each character's cell column (wide characters take two).
+function rowText(y) {
+  const line = term.buffer.active.getLine(y - 1);
+  if (!line) return null;
+  let text = '';
+  const col = [];
+  const cell = line.getCell(0);
+  for (let x = 0; x < term.cols; x++) {
+    line.getCell(x, cell);
+    if (!cell.getWidth()) continue;
+    const ch = cell.getChars() || ' ';
+    for (let i = 0; i < ch.length; i++) col.push(x);
+    text += ch;
+  }
+  return { text, col };
+}
+
+function cleanPath(p) {
+  return p.replace(/[.,:;)\]}'"]+$/, '').replace(/:\d+(?::\d+)?$/, '');
+}
+
+// Join up to three hard-wrapped path rows and check whether the resulting file exists.
+const PATH_CHAR = /[\w.@+\-/\\~:]/;
+function joinedPath(y) {
+  const rows = [];
+  let startY = y;
+  // walk back while this row starts with a word that continues the row above's last word
+  for (let i = 0; i < 2; i++) {
+    const above = rowText(startY - 1), here = rowText(startY);
+    if (!above || !here) break;
+    const a = above.text.replace(/\s+$/, ''), lead = here.text.search(/\S/);
+    if (!a || lead < 0 || !PATH_CHAR.test(a[a.length - 1]) || !/[/\\]/.test(a.slice(a.lastIndexOf(' ') + 1))) break;
+    startY--;
+  }
+  for (let r = startY; r <= Math.min(startY + 2, y + 2); r++) {
+    const row = rowText(r);
+    if (!row) break;
+    rows.push({ y: r, ...row });
+  }
+  return rows;
+}
+
+function wrappedLinks(y) {
+  const rows = joinedPath(y);
+  if (rows.length < 2) return [];
+  // the first row's last word, then each next row's first word while the previous part reached its row's end
+  const first = rows[0], a = first.text.replace(/\s+$/, '');
+  const s0 = a.lastIndexOf(' ') + 1;
+  let text = a.slice(s0);
+  if (!/[/\\]/.test(text)) return [];
+  const parts = [{ y: first.y, start: first.col[s0], end: first.col[a.length - 1] }];
+  const tries = [];
+  for (let i = 1; i < rows.length; i++) {
+    const t = rows[i].text, lead = t.search(/\S/);
+    if (lead < 0) break;
+    const m = /^\S+/.exec(t.slice(lead))[0];
+    const word = cleanPath(m);
+    if (!word) break;
+    text += word;
+    parts.push({ y: rows[i].y, start: rows[i].col[lead], end: rows[i].col[lead + word.length - 1] });
+    tries.push({ text: cleanPath(text), parts: parts.slice() });
+    const end = t.replace(/\s+$/, '').length;
+    if (lead + m.length < end || end < a.length - 3) break; // the word ended before the row did, or the row isn't full
+  }
+  return tries.filter((c) => c.parts.some((p) => p.y === y));
+}
+
+registerLinks(decorateLinks({
   provideLinks(y, callback) {
-    const line = term.buffer.active.getLine(y - 1);
-    if (!line) return callback(undefined);
-    // Build the row's text with each character's cell column (wide characters take two).
-    let text = '';
-    const col = [];
-    const cell = line.getCell(0);
-    for (let x = 0; x < term.cols; x++) {
-      line.getCell(x, cell);
-      if (!cell.getWidth()) continue;
-      const ch = cell.getChars() || ' ';
-      for (let i = 0; i < ch.length; i++) col.push(x);
-      text += ch;
-    }
+    const row = rowText(y);
+    if (!row) return callback(undefined);
+    const { text, col } = row;
     const found = [];
     for (const m of text.matchAll(PATH_RE)) {
-      let p = m[0].replace(/[.,:;)\]}'"]+$/, '').replace(/:\d+(?::\d+)?$/, '');
+      const p = cleanPath(m[0]);
       if (!p.includes('/') && !p.includes('\\')) continue;
       if (!/^([A-Za-z]:|~|\/)/.test(p) && !/\.\w+$/.test(p)) continue; // relative paths need a file extension
       found.push({ text: p, start: m.index, end: m.index + p.length - 1 });
     }
-    if (!found.length) return callback(undefined);
-    Promise.all(found.map((f) => checkPath(f.text))).then((wins) => {
+    const wrapped = wrappedLinks(y);
+    if (!found.length && !wrapped.length) return callback(undefined);
+    Promise.all([...found, ...wrapped].map((f) => checkPath(f.text))).then((wins) => {
       const links = [];
+      // the longest existing joined path wins over its own pieces
+      const joined = wrapped.map((w, i) => ({ ...w, win: wins[found.length + i] })).filter((w) => w.win).pop();
+      if (joined) {
+        const a = joined.parts[0], b = joined.parts[joined.parts.length - 1];
+        links.push({
+          text: joined.text,
+          range: { start: { x: a.start + 1, y: a.y }, end: { x: b.end + 1, y: b.y } },
+          decorations: { underline: true, pointerCursor: true },
+          activate: () => r7.openPath(joined.win),
+        });
+      }
+      const mine = joined?.parts.find((p) => p.y === y);
       found.forEach((f, i) => {
-        if (!wins[i]) return;
+        if (!wins[i] || (mine && col[f.start] <= mine.end && col[f.end] >= mine.start)) return;
         links.push({
           text: f.text,
           range: { start: { x: col[f.start] + 1, y }, end: { x: col[f.end] + 1, y } },
@@ -899,7 +1288,61 @@ term.registerLinkProvider({
       callback(links.length ? links : undefined);
     });
   },
-});
+}));
+
+// Clicking an italic quote block copies its text with wrapped paragraphs joined.
+const QUOTE_RE = /^( +)▏(?: |$)/;
+function quoteRow(y, indent) {
+  const line = term.buffer.active.getLine(y - 1);
+  if (!line) return null;
+  const text = line.translateToString(true);
+  const m = QUOTE_RE.exec(text);
+  if (!m || /▕\s*$/.test(text) || (indent !== undefined && m[1].length !== indent)) return null;
+  const body = text.slice(m[0].length).trimEnd();
+  if (body) {
+    let italic = false;
+    for (let x = m[0].length; x < text.length && !italic; x++) italic = !!line.getCell(x)?.isItalic();
+    if (!italic) return null;
+  }
+  return { indent: m[1].length, body, end: text.length };
+}
+function quoteBlock(y) {
+  const row = quoteRow(y);
+  if (!row) return null;
+  let top = y, bottom = y;
+  while (quoteRow(top - 1, row.indent)) top--;
+  while (quoteRow(bottom + 1, row.indent)) bottom++;
+  const rows = [];
+  for (let r = top; r <= bottom; r++) rows.push(quoteRow(r, row.indent));
+  if (!rows.some((q) => q.body)) return null;
+  const width = Math.max(...rows.map((q) => q.body.length));
+  let out = '';
+  rows.forEach((q, i) => {
+    if (i === 0) out = q.body;
+    else if (!q.body) out += '\r\n';
+    else if (rows[i - 1].body && softBreak(rows[i - 1].body, q.body, width)) out += ' ' + q.body;
+    else out += '\r\n' + q.body;
+  });
+  return { top, bottom, indent: row.indent, last: rows[rows.length - 1].end, text: out.trim().replace(/(\r\n){3,}/g, '\r\n\r\n') };
+}
+registerLinks(decorateLinks({
+  provideLinks(y, callback) {
+    const block = quoteBlock(y);
+    if (!block) return callback(undefined);
+    callback([{
+      text: 'Copy quote',
+      range: { start: { x: block.indent + 1, y: block.top }, end: { x: Math.max(block.last, block.indent + 1), y: block.bottom } },
+      decorations: { underline: true, pointerCursor: true },
+      activate: () => {
+        r7.writeClipboard(block.text);
+        linkTip.textContent = 'Copied';
+        linkTip.classList.add('on');
+        placeTip();
+        r7.log('info', 'quote.copy', { chars: block.text.length, rows: block.bottom - block.top + 1 });
+      },
+    }]);
+  },
+}, true));
 
 // ---- find (Ctrl+Shift+F) --------------------------------------------------------
 
@@ -968,6 +1411,7 @@ screenEl.appendChild(cursorEl);
 const glide = { visible: true, hold: !!cfg.launch?.ready, forceShape: null, shape: 'block', x: -1, y: -1, viewportY: -1, frame: 0, shown: false };
 let cursorLook = { shape: 'auto', width: 2, blinkMs: 331, ...(cfg.cursor || {}) };
 let blinkTimer = 0;
+let cursorDrawn = '';
 
 function setCursorLook(look) {
   cursorLook = { ...cursorLook, ...look };
@@ -1019,18 +1463,26 @@ function placeCursor() {
   const w = cellWidth();
   const h = rowHeight();
   // Appearing, scrolling and resizing jump straight there; only moves in place glide.
-  const snap = !glide.shown || b.viewportY !== glide.viewportY;
+  const rowOffset = window.r7RowMotion?.(y) || 0;
+  const snap = !glide.shown || b.viewportY !== glide.viewportY || !!rowOffset;
+  const shape = glide.forceShape || (cursorLook.shape === 'auto' ? glide.shape : cursorLook.shape);
+  const focused = document.hasFocus();
+  const color = colors.cursor || colors.fg;
+  const key = `${x}|${y}|${b.viewportY}|${w}|${h}|${rowOffset}|${snap}|${shape}|${focused}|${cursorLook.width}|${color}|${cfg.cursorGlideMs}`;
+  // Status/output redraws do not change a stationary cursor's classes or styles.
+  if (glide.shown && key === cursorDrawn) return;
+  cursorDrawn = key;
   cursorEl.style.transition = snap ? 'none' : `transform ${cfg.cursorGlideMs}ms cubic-bezier(.2, .8, .3, 1)`;
   cursorEl.style.display = '';
   cursorEl.style.width = `${w}px`;
   cursorEl.style.height = `${h}px`;
   cursorEl.style.transform = `translate(${x * w}px, ${y * h}px)`;
-  const shape = glide.forceShape || (cursorLook.shape === 'auto' ? glide.shape : cursorLook.shape);
+  cursorEl.style.translate = rowOffset ? `0 ${rowOffset}px` : '';
   cursorEl.classList.remove('block', 'bar', 'underline', 'outline');
   cursorEl.classList.add(shape);
-  cursorEl.classList.toggle('blurred', !document.hasFocus());
+  cursorEl.classList.toggle('blurred', !focused);
   cursorEl.style.setProperty('--cursor-width', `${cursorLook.width}px`);
-  cursorEl.style.setProperty('--cursor', colors.cursor || colors.fg);
+  cursorEl.style.setProperty('--cursor', color);
   glide.shown = true;
   glide.x = x;
   glide.y = y;
@@ -1039,7 +1491,9 @@ function placeCursor() {
 
 term.onCursorMove(queueCursor);
 term.onRender(queueCursor);
+window.addEventListener('r7-dock-layout', queueCursor);
 term.onResize(() => { glide.shown = false; queueCursor(); });
+window.addEventListener('r7-clear', () => { glide.shown = false; queueCursor(); });
 window.addEventListener('focus', () => { restartBlink(); queueCursor(); });
 window.addEventListener('blur', () => { restartBlink(); queueCursor(); });
 colorListeners.push(queueCursor);

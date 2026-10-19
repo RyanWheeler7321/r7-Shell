@@ -27,7 +27,8 @@ function clampZoom(value) {
 
 function fitScale() {
   const scale = Math.min(stage.clientWidth / picture.naturalWidth, stage.clientHeight / picture.naturalHeight);
-  return Math.min(1, scale);
+  // Fills the window, up to 2 screen pixels per picture pixel (main.js sizes the window the same way).
+  return Math.min(2 / (window.devicePixelRatio || 1), scale);
 }
 
 function centeredPosition(scale) {
@@ -180,6 +181,11 @@ window.addEventListener('resize', () => {
   }
   lastWidth = stage.clientWidth;
   lastHeight = stage.clientHeight;
+});
+
+window.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  window.viewer.menu(event.clientX, event.clientY);
 });
 
 window.addEventListener('keydown', (event) => {
